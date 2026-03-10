@@ -1,0 +1,14 @@
+# Ignore ANY .env file in ANY folder
+.env
+# Ignore any file ending in .env anywhere in the project
+**/.env
+.env
+.env.*
+# Ignore ANY venv folder
+**/venv/
+
+# Ignore Python cache
+**/__pycache__/
+
+# Ignore the whole mobile folder if you want backend-only
+TaskCareMobile/
