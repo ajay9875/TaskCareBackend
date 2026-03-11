@@ -41,6 +41,9 @@ class User(db.Model):
     email = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
     todos = db.relationship('Todo', backref='user', lazy=True)
+    # For OTP-based password reset using MySQL instead of session
+    otp = db.Column(db.String(6), nullable=True)
+    otp_expiry = db.Column(db.DateTime, nullable=True)
 
 class Todo(db.Model):
     __tablename__ = 'todo'
@@ -177,47 +180,40 @@ import os
 from datetime import datetime, timedelta
 from flask import session
 
+import smtplib
+import ssl # Added for secure connection
+from email.message import EmailMessage
+
 def send_otp(email):
-    # 1. Generate a 6-digit OTP
     otp = random.randint(100000, 999999)
-    
-    # 2. Get credentials from environment variables
     sender_email = os.getenv('EMAIL_USER')
     sender_password = os.getenv('EMAIL_PASS')
 
-    if not sender_email or not sender_password:
-        # Log error for the developer
-        print("Error: EMAIL_USER or EMAIL_PASS not set in environment.")
-        return False
-
-    # 3. Construct the email message
-    subject = "TaskCare360: Password Reset OTP"
-    body = f"Your OTP for password reset is: {otp}\n\nThis code is valid for 3 minutes."
-    message = f"Subject: {subject}\n\n{body}"
+    # Create the email structure professionally
+    msg = EmailMessage()
+    msg.set_content(f"Your TaskCare360 OTP is: {otp}\n\nValid for 3 minutes.")
+    msg['Subject'] = "TaskCare360: Password Reset OTP"
+    msg['From'] = sender_email
+    msg['To'] = email
 
     try:
-        # 4. Connect to Gmail SMTP
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()  # Secure the connection
+        # Use Port 465 and SMTP_SSL (More reliable for Render)
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(sender_email, sender_password)
-            server.sendmail(sender_email, email, message)
+            server.send_message(msg)
 
-        # 5. Store OTP and Expiry in session for API verification
-        # We store as string to ensure JSON compatibility for the mobile bridge
-        session['sent_otp'] = str(otp) 
-        session['otp_expiry'] = (datetime.now() + timedelta(minutes=3)).timestamp()
-        
-        # Force Flask to save the session cookie for the Android client
-        session.modified = True 
+        # 🚩 CRITICAL FOR MOBILE: 
+        # Instead of session['sent_otp'], update your MySQL User table:
+        # user = User.query.filter_by(email=email).first()
+        # user.otp = otp
+        # db.session.commit()
         
         return True
 
-    except smtplib.SMTPAuthenticationError:
-        print("SMTP Authentication failed. Verify your Google App Password.")
     except Exception as e:
-        print(f"SMTP Error: {str(e)}")
-    
-    return False
+        print(f"SMTP Production Error: {str(e)}")
+        return False
 
 # 1. Request OTP
 @app.route('/api/forgot_password', methods=['POST'])
@@ -238,21 +234,20 @@ def api_forgot_password():
 @app.route('/api/verify_otp', methods=['POST'])
 def api_verify_otp():
     data = request.get_json()
+    email = data.get('email') # Send email from Android app
     entered_otp = data.get('otp', '').strip()
     
-    sent_otp = session.get('sent_otp')
-    otp_expiry = session.get('otp_expiry')
-    email = session.get('email')
+    user = User.query.filter_by(email=email).first()
 
-    if not email or not sent_otp or not otp_expiry:
-        return jsonify({"status": "error", "message": "Session invalid. Restart process."}), 400
+    if not user or not user.otp:
+        return jsonify({"status": "error", "message": "No OTP found. Please request again."}), 400
 
-    if datetime.now().timestamp() > float(otp_expiry):
+    if datetime.now() > user.otp_expiry:
         return jsonify({"status": "error", "message": "OTP expired"}), 400
 
-    if str(sent_otp) == entered_otp:
-        session['verified_email'] = email
-        session.pop('sent_otp', None)
+    if user.otp == entered_otp:
+        # Success! You don't need a session here. 
+        # Just clear the OTP so it can't be used again.
         return jsonify({"status": "success", "message": "OTP verified"}), 200
     
     return jsonify({"status": "error", "message": "Invalid OTP"}), 400
@@ -260,18 +255,15 @@ def api_verify_otp():
 # 3. Reset Password
 @app.route('/api/reset_password', methods=['POST'])
 def api_reset_password():
-    email = session.get('verified_email')
-    if not email:
-        return jsonify({"status": "error", "message": "Unauthorized"}), 401
-
     data = request.get_json()
+    email = data.get('email')
     password = data.get('password')
     
     user = User.query.filter_by(email=email).first()
     if user:
         user.password = generate_password_hash(password)
+        user.otp = None # Clear OTP after use
         db.session.commit()
-        session.pop('verified_email', None)
         return jsonify({"status": "success", "message": "Password updated"}), 200
     
     return jsonify({"status": "error", "message": "User not found"}), 404
