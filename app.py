@@ -12,9 +12,7 @@ from zoneinfo import ZoneInfo
 load_dotenv()
 
 app = Flask(__name__)
-# Enable CORS for mobile connectivity with your Emulator
-CORS(app, supports_credentials=True)
-# This allows the Emulator (10.0.2.2) to send requests
+
 # Removed the specific IP-based CORS
 CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": "*"}})
 
@@ -57,6 +55,10 @@ class Todo(db.Model):
 # ======================
 # AUTH API ENDPOINTS
 # ======================
+
+@app.route('/', methods=['GET'])
+def default():
+    return jsonify({"message": "Welcome to the TaskCare API"}), 200
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
