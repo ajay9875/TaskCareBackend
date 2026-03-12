@@ -183,8 +183,14 @@ from flask import session
 import ssl # Added for secure connection
 from email.message import EmailMessage
 
+import random
+import smtplib
+import os
+import ssl
+from email.message import EmailMessage
+
 def send_otp(email):
-    otp = str(random.randint(100000, 999999)) # Generate as string
+    otp = str(random.randint(100000, 999999))  # Generate OTP as string
     sender_email = os.getenv('EMAIL_USER')
     sender_password = os.getenv('EMAIL_PASS')
 
@@ -196,10 +202,19 @@ def send_otp(email):
 
     try:
         context = ssl.create_default_context()
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
-            server.login(sender_email, sender_password) # type: ignore
+
+        # Added timeout here
+        with smtplib.SMTP_SSL(
+            "smtp.gmail.com",
+            465,
+            context=context,
+            timeout=10
+        ) as server:
+            server.login(sender_email, sender_password)  # type: ignore
             server.send_message(msg)
-        return otp  # ✅ Return the OTP so the route can save it to the DB
+
+        return otp  # Return OTP so it can be stored in DB
+
     except Exception as e:
         print(f"SMTP Error: {str(e)}")
         return None
