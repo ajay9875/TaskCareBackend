@@ -183,14 +183,8 @@ from flask import session
 import ssl # Added for secure connection
 from email.message import EmailMessage
 
-import random
-import smtplib
-import os
-import ssl
-from email.message import EmailMessage
-
 def send_otp(email):
-    otp = str(random.randint(100000, 999999))  # Generate OTP as string
+    otp = str(random.randint(100000, 999999)) # Generate as string
     sender_email = os.getenv('EMAIL_USER')
     sender_password = os.getenv('EMAIL_PASS')
 
@@ -202,19 +196,10 @@ def send_otp(email):
 
     try:
         context = ssl.create_default_context()
-
-        # Added timeout here
-        with smtplib.SMTP_SSL(
-            "smtp.gmail.com",
-            465,
-            context=context,
-            timeout=10
-        ) as server:
-            server.login(sender_email, sender_password)  # type: ignore
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+            server.login(sender_email, sender_password) # type: ignore
             server.send_message(msg)
-
-        return otp  # Return OTP so it can be stored in DB
-
+        return otp  # ✅ Return the OTP so the route can save it to the DB
     except Exception as e:
         print(f"SMTP Error: {str(e)}")
         return None
@@ -248,7 +233,7 @@ def api_verify_otp():
     user = User.query.filter_by(email=email).first()
 
     if not user or not user.otp:
-        return jsonify({"status": "error", "message": "No OTP found."}), 400
+        return jsonify({"status": "error", "message": "No OTP found. please send otp now."}), 400
 
     if datetime.now() > user.otp_expiry:
         return jsonify({"status": "error", "message": "OTP expired"}), 400
