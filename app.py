@@ -4,8 +4,8 @@ import smtplib
 from datetime import datetime, timedelta, UTC
 from dotenv import load_dotenv
 from flask import Flask, request, session, jsonify, current_app
-from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy # type: ignore
+from flask_cors import CORS # type: ignore
 from werkzeug.security import generate_password_hash, check_password_hash
 from zoneinfo import ZoneInfo
 
@@ -180,16 +180,14 @@ import os
 from datetime import datetime, timedelta
 from flask import session
 
-import smtplib
 import ssl # Added for secure connection
 from email.message import EmailMessage
 
 def send_otp(email):
-    otp = random.randint(100000, 999999)
+    otp = str(random.randint(100000, 999999)) # Generate as string
     sender_email = os.getenv('EMAIL_USER')
     sender_password = os.getenv('EMAIL_PASS')
 
-    # Create the email structure professionally
     msg = EmailMessage()
     msg.set_content(f"Your TaskCare360 OTP is: {otp}\n\nValid for 3 minutes.")
     msg['Subject'] = "TaskCare360: Password Reset OTP"
@@ -197,23 +195,14 @@ def send_otp(email):
     msg['To'] = email
 
     try:
-        # Use Port 465 and SMTP_SSL (More reliable for Render)
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
-            server.login(sender_email, sender_password)
+            server.login(sender_email, sender_password) # type: ignore
             server.send_message(msg)
-
-        # 🚩 CRITICAL FOR MOBILE: 
-        # Instead of session['sent_otp'], update your MySQL User table:
-        # user = User.query.filter_by(email=email).first()
-        # user.otp = otp
-        # db.session.commit()
-        
-        return True
-
+        return otp  # ✅ Return the OTP so the route can save it to the DB
     except Exception as e:
-        print(f"SMTP Production Error: {str(e)}")
-        return False
+        print(f"SMTP Error: {str(e)}")
+        return None
 
 # 1. Request OTP
 @app.route('/api/forgot_password', methods=['POST'])
@@ -223,31 +212,33 @@ def api_forgot_password():
     user = User.query.filter_by(email=email).first()
 
     if user:
-        if send_otp(email):
-            session['email'] = email # Store for verification step
-            return jsonify({"status": "success", "message": "OTP sent to your email"}), 200
-        return jsonify({"status": "error", "message": "Failed to send OTP"}), 500
+        otp_code = send_otp(email) # Capture the returned OTP
+        if otp_code:
+            # ✅ SAVE TO DATABASE (Required for Mobile)
+            user.otp = otp_code
+            user.otp_expiry = datetime.now() + timedelta(minutes=3)
+            db.session.commit()
+            return jsonify({"status": "success", "message": "OTP sent"}), 200
+        return jsonify({"status": "error", "message": "Failed to send email"}), 500
     
     return jsonify({"status": "error", "message": "Email not found"}), 404
 
-# 2. Verify OTP
+# 2. Verify OTP (As you wrote it, it's perfect once the DB is populated)
 @app.route('/api/verify_otp', methods=['POST'])
 def api_verify_otp():
     data = request.get_json()
-    email = data.get('email') # Send email from Android app
+    email = data.get('email')
     entered_otp = data.get('otp', '').strip()
     
     user = User.query.filter_by(email=email).first()
 
     if not user or not user.otp:
-        return jsonify({"status": "error", "message": "No OTP found. Please request again."}), 400
+        return jsonify({"status": "error", "message": "No OTP found."}), 400
 
     if datetime.now() > user.otp_expiry:
         return jsonify({"status": "error", "message": "OTP expired"}), 400
 
     if user.otp == entered_otp:
-        # Success! You don't need a session here. 
-        # Just clear the OTP so it can't be used again.
         return jsonify({"status": "success", "message": "OTP verified"}), 200
     
     return jsonify({"status": "error", "message": "Invalid OTP"}), 400
@@ -262,7 +253,8 @@ def api_reset_password():
     user = User.query.filter_by(email=email).first()
     if user:
         user.password = generate_password_hash(password)
-        user.otp = None # Clear OTP after use
+        user.otp = None # ✅ Clean up
+        user.otp_expiry = None
         db.session.commit()
         return jsonify({"status": "success", "message": "Password updated"}), 200
     
