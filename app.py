@@ -109,6 +109,7 @@ def update_target():
     db.session.commit()
     return jsonify({"status": "success", "message": "Target updated"}), 200
 
+# This is the critical endpoint that the mobile app will call to sync steps and also trigger the 15-day cleanup logic
 @app.route('/api/steps/sync', methods=['POST'])
 def sync_steps():
     if 'user_id' not in session:
@@ -118,17 +119,47 @@ def sync_steps():
     steps = data.get('steps', 0)
     distance = data.get('distance', 0.0)
     today = datetime.now(IST).date()
+    user_id = session['user_id']
 
-    log = StepLog.query.filter_by(user_id=session['user_id'], date=today).first()
+    # 1. Save/Update today's steps
+    log = StepLog.query.filter_by(user_id=user_id, date=today).first()
     if log:
         log.steps = steps
         log.distance_km = distance
     else:
-        log = StepLog(user_id=session['user_id'], steps=steps, distance_km=distance, date=today)
+        log = StepLog(user_id=user_id, steps=steps, distance_km=distance, date=today)
         db.session.add(log)
     
+    # 2. THE 15-DAY CLEANUP LOGIC
+    # Calculate the cutoff date (Today - 15 days)
+    cutoff_date = today - timedelta(days=15)
+    
+    # Delete everything older than the cutoff for this user
+    StepLog.query.filter(
+        StepLog.user_id == user_id, 
+        StepLog.date < cutoff_date
+    ).delete()
+
     db.session.commit()
-    return jsonify({"status": "success"}), 200
+    return jsonify({"status": "success", "message": "Synced and history cleaned"}), 200
+
+# Endpoint to fetch step history for the last 15 days
+@app.route('/api/steps/performance', methods=['GET'])
+def get_performance():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    # Fetch the 15-day history in chronological order
+    logs = StepLog.query.filter_by(user_id=session['user_id'])\
+                         .order_by(StepLog.date.asc()).all()
+    
+    return jsonify({
+        "status": "success",
+        "history": [{
+            "date": l.date.strftime('%d %b'), 
+            "steps": l.steps
+        } for l in logs]
+    }), 200
 
 # Open app using web route for email app
 @app.route('/contact-support')
