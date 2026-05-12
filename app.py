@@ -96,45 +96,45 @@ def get_steps_data():
         "distance_km": log.distance_km if log else 0.0
     }), 200
 
-@app.route('/api/steps/update-target', methods=['POST'])
-def update_target():
-    if 'user_id' not in session:
-        return jsonify({"error": "Unauthorized"}), 401
-    
-    data = request.get_json()
-    new_target = data.get('target', 5000)
-    
-    user = User.query.get(session['user_id'])
-    user.target_steps = new_target
-    db.session.commit()
-    return jsonify({"status": "success", "message": "Target updated"}), 200
-
-# This is the critical endpoint that the mobile app will call to sync steps and also trigger the 15-day cleanup logic
+# This is the critical endpoint that the mobile app will call to sync steps. It handles both foreground (absolute) and background (delta) updates, and also performs the 15-day cleanup of old step logs.
 @app.route('/api/steps/sync', methods=['POST'])
 def sync_steps():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
     
     data = request.get_json()
-    steps = data.get('steps', 0)
-    distance = data.get('distance', 0.0)
+    new_steps = data.get('steps', 0)
+    new_distance = data.get('distance', 0.0)
+    # This flag is critical! 
+    # True = From Foreground (Total) | False = From Background (Delta)
+    is_absolute = data.get('is_absolute', True) 
+    
     today = datetime.now(IST).date()
     user_id = session['user_id']
 
-    # 1. Save/Update today's steps
     log = StepLog.query.filter_by(user_id=user_id, date=today).first()
+    
     if log:
-        log.steps = steps
-        log.distance_km = distance
+        if is_absolute:
+            # Foreground: The App sends the absolute total for today
+            log.steps = new_steps 
+            log.distance_km = new_distance
+        else:
+            # Background: TaskManager sends ONLY the steps found in the last 15m
+            log.steps += new_steps 
+            log.distance_km += new_distance
     else:
-        log = StepLog(user_id=user_id, steps=steps, distance_km=distance, date=today)
+        # First steps of the day: Create a new record
+        log = StepLog(
+            user_id=user_id, 
+            steps=new_steps, 
+            distance_km=new_distance, 
+            date=today
+        )
         db.session.add(log)
     
-    # 2. THE 15-DAY CLEANUP LOGIC
-    # Calculate the cutoff date (Today - 15 days)
+    # --- 15-DAY CLEANUP ---
     cutoff_date = today - timedelta(days=15)
-    
-    # Delete everything older than the cutoff for this user
     StepLog.query.filter(
         StepLog.user_id == user_id, 
         StepLog.date < cutoff_date
@@ -160,6 +160,20 @@ def get_performance():
             "steps": l.steps
         } for l in logs]
     }), 200
+
+# Update target steps by user (This allows users to set their own goals from the mobile app)
+@app.route('/api/steps/update-target', methods=['POST'])
+def update_target():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    data = request.get_json()
+    new_target = data.get('target', 5000)
+    
+    user = User.query.get(session['user_id'])
+    user.target_steps = new_target
+    db.session.commit()
+    return jsonify({"status": "success", "message": "Target updated"}), 200
 
 # Open app using web route for email app
 @app.route('/contact-support')
