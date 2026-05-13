@@ -14,7 +14,12 @@ load_dotenv()
 app = Flask(__name__)
 
 # Removed the specific IP-based CORS
-CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": "*"}})
+#CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": "*"}})
+# To this (Specific origins are required when supports_credentials is True):
+CORS(app, supports_credentials=True, origins=[
+    "http://localhost:8081",                # For local Expo development
+    "https://taskcare360.pythonanywhere.com" # For your production site
+])
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
@@ -201,7 +206,7 @@ from email.mime.multipart import MIMEMultipart
 
 def notification_scheduler():
     target_times = [
-        (19, 30)    # 3:30 PM
+        (20, 59)    # 3:30 PM
     ]
 
     last_run_times = {}  # Track last run for each target
