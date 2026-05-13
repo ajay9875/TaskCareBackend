@@ -202,7 +202,7 @@ from email.mime.multipart import MIMEMultipart
 # This function runs in a separate thread and checks every minute if it's time to send the daily reminders. It calculates the next target time (3:30 PM IST) and sleeps until then. When the time comes, it calls the send_daily_task_reminders function to send out the emails. It also keeps track of the last run time to avoid sending multiple emails if the scheduler runs multiple times within the same minute.
 def notification_scheduler():
     target_times = [
-        (21, 30)    # 3:30 PM
+        (22, 15)    # 10:15 PM
     ]
 
     last_run_times = {}  # Track last run for each target
@@ -347,7 +347,7 @@ def send_daily_task_reminders():
                             </thead>
                             <tbody>{task_rows}</tbody>
                         </table>
-                        <p><strong>Total pending:</strong> {len(tasks)}</p>
+                        <p><strong>Total pending tasks:</strong> {len(tasks)}</p>
                         """
 
                     # Final HTML
@@ -358,13 +358,11 @@ def send_daily_task_reminders():
 
                         {fitness_html}
 
-
-                        <p style="text-align: center; margin-top: 20px;">
+                        <p style="text-align: center; margin: 30px 0;">
                             <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
                                 Open TaskCare 360
                             </a>
                         </p>
-
 
                         {task_content}
 
