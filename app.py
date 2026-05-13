@@ -14,12 +14,7 @@ load_dotenv()
 app = Flask(__name__)
 
 # Removed the specific IP-based CORS
-#CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": "*"}})
-# To this (Specific origins are required when supports_credentials is True):
-CORS(app, supports_credentials=True, origins=[
-    "http://localhost:8081",                # For local Expo development
-    "https://taskcare360.pythonanywhere.com" # For your production site
-])
+CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": "*"}})
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
@@ -204,9 +199,10 @@ from flask import current_app
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# This function runs in a separate thread and checks every minute if it's time to send the daily reminders. It calculates the next target time (3:30 PM IST) and sleeps until then. When the time comes, it calls the send_daily_task_reminders function to send out the emails. It also keeps track of the last run time to avoid sending multiple emails if the scheduler runs multiple times within the same minute.
 def notification_scheduler():
     target_times = [
-        (20, 59)    # 3:30 PM
+        (21, 30)    # 3:30 PM
     ]
 
     last_run_times = {}  # Track last run for each target
@@ -257,141 +253,151 @@ def notification_scheduler():
         except Exception as e:
             print(f"❌ Error sending notifications: {str(e)}")
 
-from datetime import date, datetime
-# Logic with fitness reports
+# This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the TaskCare360 app for maximum engagement.
+from datetime import date
 def send_daily_task_reminders():
     sender_email = os.getenv('EMAIL_USER')
     sender_password = os.getenv('EMAIL_PASS')
     login_url = "https://TaskCare360.pythonanywhere.com/open-app"
 
     if not sender_email or not sender_password:
-        return jsonify({"error": "Email credentials are not set."}), 500
+        print("❌ Email credentials missing")
+        return False
 
     try:
         users = User.query.all()
         if not users:
+            print("No users found")
             return False
-        
+
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(sender_email, sender_password)
+            emails_sent = 0
 
             for user in users:
-                # --- 1. DATA RETRIEVAL ---
-                today = date.today()
-                
-                # Fetch Fitness Progress
-                today_stats = StepLog.query.filter_by(user_id=user.id, date=today).first()
-                steps = today_stats.steps if today_stats else 0
-                distance = today_stats.distance_km if today_stats else 0.0
-                calories = round(steps * 0.04, 2)
-                
-                # Calculate Goal Progress
-                target = user.target_steps or 5000
-                progress_percent = min(round((steps / target) * 100), 100)
-
-                # Fetch Tasks
-                tasks = Todo.query.filter_by(user_id=user.id).order_by(Todo.SNo.desc()).all()
-
-                # --- 2. HTML CONTENT CONSTRUCTION ---
-                
-                # Fitness Progress Section
-                fitness_html = f"""
-                <div style="background-color: #f0f7ff; padding: 15px; border-radius: 10px; border: 1px solid #d1e3ff; margin-bottom: 20px; font-family: Arial, sans-serif;">
-                    <h3 style="margin: 0 0 10px 0; color: #0056b3;">🏃 Today's Fitness Progress</h3>
-                    <table style="width: 100%; border: none; text-align: center;">
-                        <tr>
-                            <td><span style="color: #666; font-size: 12px;">Steps</span><br><strong>{steps:,} / {target:,}</strong></td>
-                            <td><span style="color: #666; font-size: 12px;">Distance</span><br><strong>{distance} km</strong></td>
-                            <td><span style="color: #666; font-size: 12px;">Calories</span><br><strong>{calories} kcal</strong></td>
-                        </tr>
-                    </table>
-                    <div style="background-color: #e0e0e0; border-radius: 5px; height: 12px; margin-top: 15px; overflow: hidden;">
-                        <div style="background-color: #28a745; width: {progress_percent}%; height: 12px; border-radius: 5px;"></div>
-                    </div>
-                    <p style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;">
-                        You have achieved <strong>{progress_percent}%</strong> of your daily goal!
-                    </p>
-                </div>
-                """
-
-                # Tasks Section
-                if not tasks:
-                    task_content = """
-                    <p style="text-align: center; color: #666; padding: 20px; border: 1px dashed #ddd; border-radius: 8px;">
-                        🎉 Great job! You currently have no pending tasks.
-                    </p>
-                    """
-                else:
-                    task_rows = ""
-                    for task in tasks:
-                        task_rows += f"""
-                        <tr>
-                            <td style="border:1px solid #ddd;padding:8px;">{task.title}</td>
-                            <td style="border:1px solid #ddd;padding:8px;">{task.desc or 'No description'}</td>
-                            <td style="border:1px solid #ddd;padding:8px;">{task.date_created.strftime('%Y-%m-%d')}</td>
-                        </tr>
-                        """
-                    
-                    task_content = f"""
-                    <h3 style="color: #333; margin-bottom: 10px;">📋 Pending Tasks</h3>
-                    <table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif;">
-                        <thead>
-                            <tr style="background-color: #f2f2f2;">
-                                <th style="border:1px solid #ddd;padding:8px;text-align:left;">Title</th>
-                                <th style="border:1px solid #ddd;padding:8px;text-align:left;">Description</th>
-                                <th style="border:1px solid #ddd;padding:8px;text-align:left;">Date</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {task_rows}
-                        </tbody>
-                    </table>
-                    <p style="margin-top: 10px;"><strong>Total pending tasks:</strong> {len(tasks)}</p>
-                    """
-
-                # Combine everything into the final body
-                html_body = f"""
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; color: #333;">
-                    <h2 style="color: #444;">Hello, {user.name}!</h2>
-                    <p>Stay focused and keep moving. Here is your progress report for today:</p>
-                    
-                    {fitness_html}
-                    {task_content}
-
-                    <p style="margin-top: 20px; text-align: center;">
-                        <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
-                            Go to Dashboard
-                        </a>
-                    </p>
-                    
-                    <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0;">
-                    <p style="font-size: 12px; color: #888; text-align: center;">
-                        TaskCare360 — Your health and productivity partner.<br>
-                        Take small steps consistently for big results! 🚀
-                    </p>
-                </div>
-                """
-
-                # --- 3. SEND EMAIL ---
-                subject = f"📊 Daily Progress Report - {today.strftime('%b %d')}"
-                msg = MIMEMultipart("alternative")
-                msg['From'] = sender_email
-                msg['To'] = user.email
-                msg['Subject'] = subject
-                msg.attach(MIMEText(html_body, 'html', 'utf-8'))
-
                 try:
-                    server.send_message(msg)
-                except Exception as e:
-                    current_app.logger.error(f"Failed to send to {user.email}: {e}")
+                    # --- GET TODAY'S DATE PROPERLY ---
+                    today = date.today()  # This returns date object like date(2026, 5, 13)
 
-        return True
+                    # Query StepLog for today - works with date objects
+                    today_stats = StepLog.query.filter_by(
+                        user_id=user.id,
+                        date=today
+                    ).first()
+
+                    steps = today_stats.steps if today_stats else 0
+                    distance = today_stats.distance_km if today_stats else 0.0
+                    calories = round(steps * 0.04, 2)
+
+                    # Goal progress
+                    target = user.target_steps if user.target_steps else 5000
+                    progress_percent = min(round((steps / target) * 100), 100)
+
+                    # Get tasks
+                    tasks = Todo.query.filter_by(user_id=user.id).order_by(Todo.SNo.desc()).all()
+
+                    # --- BUILD EMAIL HTML ---
+                    fitness_html = f"""
+                    <div style="background-color: #f0f7ff; padding: 15px; border-radius: 10px; border: 1px solid #d1e3ff; margin-bottom: 20px;">
+                        <h3 style="margin: 0 0 10px 0; color: #0056b3;">🏃 Today's Fitness Progress</h3>
+                        <table style="width: 100%; text-align: center;">
+                            <tr>
+                                <td><span style="color: #666; font-size: 12px;">Steps</span><br><strong>{steps:,} / {target:,}</strong></td>
+                                <td><span style="color: #666; font-size: 12px;">Distance</span><br><strong>{distance} km</strong></td>
+                                <td><span style="color: #666; font-size: 12px;">Calories</span><br><strong>{calories} kcal</strong></td>
+                            </tr>
+                        </table>
+                        <div style="background-color: #e0e0e0; border-radius: 5px; height: 12px; margin-top: 15px; overflow: hidden;">
+                            <div style="background-color: #28a745; width: {progress_percent}%; height: 12px;"></div>
+                        </div>
+                        <p style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;">
+                            ✅ Achieved <strong>{progress_percent}%</strong> of daily goal!
+                        </p>
+                    </div>
+                    """
+
+                    # Tasks section
+                    if not tasks:
+                        task_content = """
+                        <div style="text-align: center; padding: 20px; border: 1px dashed #ddd; border-radius: 8px;">
+                            🎉 Great job! No pending tasks. Keep it up!
+                        </div>
+                        """
+                    else:
+                        task_rows = ""
+                        for task in tasks:
+                            task_rows += f"""
+                            <tr>
+                                <td style="border:1px solid #ddd;padding:8px;">{task.title}</td>
+                                <td style="border:1px solid #ddd;padding:8px;">{task.desc or 'No description'}</td>
+                                <td style="border:1px solid #ddd;padding:8px;">{task.date_created.strftime('%Y-%m-%d')}</td>
+                            </tr>
+                            """
+
+                        task_content = f"""
+                        <h3 style="color: #333;">📋 Pending Tasks</h3>
+                        <table style="border-collapse: collapse; width: 100%;">
+                            <thead>
+                                <tr style="background-color: #f2f2f2;">
+                                    <th style="border:1px solid #ddd;padding:8px;">Title</th>
+                                    <th style="border:1px solid #ddd;padding:8px;">Description</th>
+                                    <th style="border:1px solid #ddd;padding:8px;">Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>{task_rows}</tbody>
+                        </table>
+                        <p><strong>Total pending:</strong> {len(tasks)}</p>
+                        """
+
+                    # Final HTML
+                    html_body = f"""
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; color: #333;">
+                        <h2>Hello, {user.name}! 👋</h2>
+                        <p>Here's your daily progress report:</p>
+
+                        {fitness_html}
+
+
+                        <p style="text-align: center; margin-top: 20px;">
+                            <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                                Open TaskCare 360
+                            </a>
+                        </p>
+
+
+                        {task_content}
+
+                        <hr style="margin: 30px 0;">
+                        <p style="font-size: 12px; color: #888; text-align: center;">
+                            TaskCare360 — Your health & productivity partner 🚀
+                        </p>
+                    </div>
+                    """
+
+                    # Send email
+                    subject = f"📊 Daily Progress - {today.strftime('%b %d')}"
+                    msg = MIMEMultipart("alternative")
+                    msg['From'] = sender_email
+                    msg['To'] = user.email
+                    msg['Subject'] = subject
+                    msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+
+                    server.send_message(msg)
+                    emails_sent += 1
+                    print(f"✅ Email sent to {user.email}")
+
+                except Exception as e:
+                    print(f"❌ Failed to send to {user.email}: {str(e)}")
+                    continue
+
+            print(f"📧 Sent {emails_sent} out of {len(users)} emails")
+            return emails_sent > 0
 
     except Exception as e:
-        current_app.logger.error(f"Unexpected error: {e}")
-        return jsonify({"error": "An error occurred while sending reminders."}), 500
-
+        print(f"❌ Fatal error in send_daily_task_reminders: {str(e)}")
+        return False
+    
 # ✅ Start scheduler only once in production (and local dev)
 def start_scheduler():
     if os.environ.get("RUN_MAIN") != "true":  # Avoid running twice in development
