@@ -151,23 +151,37 @@ def sync_steps():
     db.session.commit()
     return jsonify({"status": "success", "message": "Synced and history cleaned"}), 200
 
-
+# Endpoint to fetch the 15-day history for the performance screen, including the correct target for each day
 @app.route('/api/steps/performance', methods=['GET'])
 def get_performance():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
     
+    user = User.query.get(session['user_id'])
+    today = datetime.now(IST).date() # Ensure your IST timezone variable is accessible here
+    
     # Fetch the 15-day history in chronological order
-    logs = StepLog.query.filter_by(user_id=session['user_id'])\
+    logs = StepLog.query.filter_by(user_id=user.id)\
                           .order_by(StepLog.date.asc()).all()
+    
+    history_data = []
+    for l in logs:
+        # If the log entry is for TODAY, use the live user table profile setting
+        if l.date == today:
+            current_target = user.target_steps
+        else:
+            # For past days, use the frozen row snapshot setting
+            current_target = l.target_steps
+            
+        history_data.append({
+            "date": l.date.strftime('%d %b'), 
+            "steps": l.steps,
+            "target_steps": current_target
+        })
     
     return jsonify({
         "status": "success",
-        "history": [{
-            "date": l.date.strftime('%d %b'), 
-            "steps": l.steps,
-            "target_steps": l.target_steps # ✅ FIXED: Safely reads the row snapshot column attribute
-        } for l in logs]
+        "history": history_data
     }), 200
 
 # Update target steps by user (This allows users to set their own goals from the mobile app)
