@@ -668,7 +668,7 @@ def send_daily_task_reminders():
     
 # 🧪 TEMPORARY TEST ROUTE: Trigger emails instantly via browser
 @app.route('/api/send-daily-email')
-def test_email_direct():
+def send_daily_email():
     print("🚀 Manual trigger: Executing email sequence...")
     try:
         # We call the function directly inside the main web process
