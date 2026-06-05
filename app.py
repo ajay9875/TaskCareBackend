@@ -26,7 +26,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=False,    # Only send cookies over HTTPS
     SESSION_COOKIE_HTTPONLY=True,  # Prevent JavaScript from stealing cookies
     SESSION_COOKIE_SAMESITE='Lax',# Required for Cross-App requests (Android to Web)
-    PERMANENT_SESSION_LIFETIME=timedelta(days=7)
+    PERMANENT_SESSION_LIFETIME=timedelta(days=14)
 )
 """
 
@@ -35,7 +35,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,    # Only send cookies over HTTPS
     SESSION_COOKIE_HTTPONLY=True,  # Prevent JavaScript from stealing cookies
     SESSION_COOKIE_SAMESITE='None',# Required for Cross-App requests (Android to Web)
-    PERMANENT_SESSION_LIFETIME=timedelta(days=7)
+    #PERMANENT_SESSION_LIFETIME=timedelta(days=14)
 )
 
 db = SQLAlchemy(app)
@@ -66,6 +66,7 @@ class Todo(db.Model):
     desc = db.Column(db.String, nullable=False)
     date_created = db.Column(db.Date, nullable=False)
     date_updated = db.Column(db.Date, nullable=True)
+    is_completed = db.Column(db.Boolean, default=False, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 class StepLog(db.Model):
@@ -402,12 +403,6 @@ def start_scheduler():
         scheduler_thread = threading.Thread(target=notification_scheduler, daemon=True)
         scheduler_thread.start()
 
-# ✅ Always create the database on startup
-with app.app_context():
-    #db.create_all()
-    #print("✅ Database initialized successfully")
-    start_scheduler()  # 🔥 Always start scheduler
-
 # ======================
 # AUTH API ENDPOINTS
 # ======================
@@ -474,7 +469,12 @@ def get_dashboard_data():
     return jsonify({
         "status": "success",
         "username": session.get('username'),
-        "tasks": [{"SNo": t.SNo, "title": t.title, "desc": t.desc, "date_created": t.date_created.isoformat(), "date_updated": t.date_updated.isoformat() if t.date_updated else None} for t in all_tasks]
+        "tasks": [{"SNo": t.SNo,
+        "title": t.title, 
+        "desc": t.desc,
+        "is_completed": t.is_completed, # ✅ FIXED: Sent boolean mapping to mobile 
+        "date_created": t.date_created.isoformat(), 
+        "date_updated": t.date_updated.isoformat() if t.date_updated else None} for t in all_tasks]
     }), 200
 
 # ======================
@@ -532,6 +532,32 @@ def add_todo():
     except Exception as e:
         db.session.rollback() # Important for keeping the DB healthy
         return jsonify({"status": "error", "message": str(e)}), 500
+    
+# 🔥 NEW SEPARATE API ROUTE FOR TOGGLING STATE ONLY
+@app.route('/api/tasks/toggle/<int:SNo>', methods=['POST'])
+def api_toggle_task_complete(SNo):
+    try:
+        if 'user_id' not in session:
+            return jsonify({"status": "error", "message": "Unauthorized access"}), 401
+
+        todo = Todo.query.filter_by(SNo=SNo, user_id=session['user_id']).first()
+        if not todo:
+            return jsonify({"status": "error", "message": "Task not found"}), 404
+
+        # Simply invert the current boolean flag
+        todo.is_completed = not todo.is_completed
+        todo.date_updated = datetime.now(IST).date()
+
+        db.session.commit()
+        return jsonify({
+            "status": "success", 
+            "message": "Status updated successfully", 
+            "is_completed": todo.is_completed
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/delete/<int:sno>', methods=['DELETE'])
 def delete_todo(sno):
@@ -587,7 +613,7 @@ def api_forgot_password():
         if otp_code:
             # ✅ SAVE TO DATABASE (Required for Mobile)
             user.otp = otp_code
-            user.otp_expiry = datetime.now() + timedelta(minutes=3)
+            user.otp_expiry = datetime.now() + timedelta(minutes=5)
             db.session.commit()
             return jsonify({"status": "success", "message": "OTP sent"}), 200
         return jsonify({"status": "error", "message": "Failed to send email"}), 500
@@ -682,6 +708,8 @@ def initialize_database():
         #db.session.execute(db.text('CREATE SCHEMA IF NOT EXISTS taskcare_schema'))
         db.session.commit()
         db.create_all()
+        print("✅ Database initialized successfully")
+        start_scheduler()   # 🔥 This kicks off your 10:15 PM background thread
 
 if __name__ == '__main__':
     initialize_database()
