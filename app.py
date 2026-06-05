@@ -8,6 +8,17 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from zoneinfo import ZoneInfo
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+import time
+import threading
+
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import os
+import ssl # Added for secure connection
+from email.message import EmailMessage
+from flask_migrate import Migrate  # 🚀 Import Flask-Migrate
 
 load_dotenv()      
 
@@ -45,6 +56,9 @@ app.config.update(
 )
 
 db = SQLAlchemy(app)
+
+migrate = Migrate(app, db)  # 🚀 Initialize Migrate with your app and db
+
 IST = ZoneInfo("Asia/Kolkata")
 
 # ======================
@@ -88,8 +102,6 @@ class StepLog(db.Model):
 # ======================
 # API ENDPOINTS
 # ======================
-
-from datetime import datetime, timedelta
 
 @app.route('/api/steps/data', methods=['GET'])
 def get_steps_data():
@@ -220,18 +232,10 @@ def open_app():
     return redirect("taskcaremobile://login")
 
 # To send daily reminder using email to each users with their tasks
-from zoneinfo import ZoneInfo
-import time
-import threading
-
-from flask import current_app
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-
 # This function runs in a separate thread and checks every minute if it's time to send the daily reminders. It calculates the next target time (3:30 PM IST) and sleeps until then. When the time comes, it calls the send_daily_task_reminders function to send out the emails. It also keeps track of the last run time to avoid sending multiple emails if the scheduler runs multiple times within the same minute.
 def notification_scheduler():
     target_times = [
-        (20, 53)    # 10:15 PM
+        (21, 35)    # 10:15 PM
     ]
 
     last_run_times = {}  # Track last run for each target
@@ -283,7 +287,6 @@ def notification_scheduler():
             print(f"❌ Error sending notifications: {str(e)}")
 
 # This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the TaskCare360 app for maximum engagement.
-from datetime import date
 def send_daily_task_reminders():
     sender_email = os.getenv('EMAIL_USER')
     sender_password = os.getenv('EMAIL_PASS')
@@ -603,11 +606,6 @@ def delete_todo(sno):
 # FORGOT PASSWORD API
 # ======================
 
-
-import os
-import ssl # Added for secure connection
-from email.message import EmailMessage
-
 def send_otp(email):
     otp = str(random.randint(100000, 999999)) # Generate as string
     sender_email = os.getenv('EMAIL_USER')
@@ -733,11 +731,11 @@ def api_update_todo(SNo):
 
 def initialize_database():
     with app.app_context():
-        #db.session.execute(db.text('CREATE SCHEMA IF NOT EXISTS taskcare_schema'))
-        db.session.commit()
+        # Cleaned up the empty raw SQL try/except block. 
+        # Flask-Migrate completely replaces manual query checks!
         db.create_all()
         print("✅ Database initialized successfully")
-        start_scheduler()   # 🔥 This kicks off your 10:15 PM background thread
+        start_scheduler()   # 🔥 This kicks off your background thread
 
 if __name__ == '__main__':
     initialize_database()
