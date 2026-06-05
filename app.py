@@ -666,77 +666,8 @@ def send_daily_task_reminders():
         print(f"❌ Fatal error in send_daily_task_reminders: {str(e)}")
         return False
     
-# To send daily reminder using email to each users with their tasks
-# To send daily reminder using email to each users with their tasks
-from datetime import time as datetime_time
-def notification_scheduler():
-    # Concrete 24-hour targets: (22, 15) is exactly 10:15 PM IST
-    target_times = [
-        (0, 5),   # Midnight catch-all for users who want early reminders
-    ]
-
-    print("🚀 Production notification scheduler thread active.")
-
-    while True:
-        now = datetime.now(IST)
-        current_date = now.date()
-
-        upcoming_targets = []
-
-        for hour, minute in target_times:
-            # Changed time() to datetime_time() to bypass the module name conflict
-            target_today = datetime.combine(current_date, datetime_time(hour, minute)).replace(tzinfo=IST)
-            # If target has already ticked past today, explicitly lock onto tomorrow's date structure
-            if now >= target_today:
-                target_today += timedelta(days=1)
-                
-            upcoming_targets.append(target_today)
-
-        # Sort to find the absolute closest upcoming milestone
-        upcoming_targets.sort()
-        next_target = upcoming_targets[0]
-
-        sleep_seconds = (next_target - now).total_seconds()
-
-        if sleep_seconds > 0:
-            print(f"⏳ Scheduler Status: Next run firmly locked at {next_target.strftime('%I:%M %p')} IST (sleeping {int(sleep_seconds)}s)")
-            time.sleep(sleep_seconds)
-
-        # OS Pad Protection: If the server wakes up microseconds early, drift safely into the target minute milestone
-        while datetime.now(IST) < next_target:
-            time.sleep(0.5)
-
-        # --- UNBROKEN PRODUCTION EXECUTION GATE ---
-        try:
-            with app.app_context():
-                print(f"⏰ Target Reached: Executing daily notification processing for {next_target.strftime('%I:%M %p')} IST")
-                
-                # Directly execute the script logic inside the app context hook
-                sent_msg = send_daily_task_reminders()
-
-                if sent_msg:
-                    print("✅ Reminders sent successfully")
-                else:
-                    print("ℹ️ Task round complete: No user emails required transmission.")
-
-        except Exception as e:
-            print(f"❌ Error sending notifications: {str(e)}")
-
-        # 🛡️ THE PERMANENT FIX FOR DRIFT & ENGINE RESETS:
-        # Sleep for 61 seconds immediately after the execution round finishes.
-        # This pushes the system clock safely to 10:16 PM, stepping completely over 
-        # the evaluation target window before the loop re-evaluates.
-        time.sleep(61)
-
-
-# ✅ Start scheduler only once in production (and local dev)
-def start_scheduler():
-    if os.environ.get("RUN_MAIN") != "true":  # Avoid running twice in development
-        scheduler_thread = threading.Thread(target=notification_scheduler, daemon=True)
-        scheduler_thread.start()
-
 # 🧪 TEMPORARY TEST ROUTE: Trigger emails instantly via browser
-@app.route('/api/test-email-direct')
+@app.route('/api/send-daily-email')
 def test_email_direct():
     print("🚀 Manual trigger: Executing email sequence...")
     try:
@@ -755,7 +686,6 @@ def initialize_database():
         # Flask-Migrate completely replaces manual query checks!
         db.create_all()
         print("✅ Database initialized successfully")
-        start_scheduler()   # 🔥 This kicks off your background thread
 
 if __name__ == '__main__':
     initialize_database()
