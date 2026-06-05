@@ -76,10 +76,14 @@ class StepLog(db.Model):
     steps = db.Column(db.Integer, default=0)
     distance_km = db.Column(db.Float, default=0.0)
     date = db.Column(db.Date, nullable=False)
+    # 🔥 Add this column to save the historical daily goal
+    target_steps = db.Column(db.Integer, default=5000)
 
 # ======================
 # API ENDPOINTS
 # ======================
+
+from datetime import datetime, timedelta
 
 @app.route('/api/steps/data', methods=['GET'])
 def get_steps_data():
@@ -92,12 +96,12 @@ def get_steps_data():
     
     return jsonify({
         "status": "success",
-        "target_steps": user.target_steps,
+        "target_steps": user.target_steps, # Pulls your current live target setting
         "current_steps": log.steps if log else 0,
         "distance_km": log.distance_km if log else 0.0
     }), 200
 
-# This is the critical endpoint that the mobile app will call to sync steps. It handles both foreground (absolute) and background (delta) updates, and also performs the 15-day cleanup of old step logs.
+
 @app.route('/api/steps/sync', methods=['POST'])
 def sync_steps():
     if 'user_id' not in session:
@@ -106,31 +110,34 @@ def sync_steps():
     data = request.get_json()
     new_steps = data.get('steps', 0)
     new_distance = data.get('distance', 0.0)
-    # This flag is critical! 
-    # True = From Foreground (Total) | False = From Background (Delta)
     is_absolute = data.get('is_absolute', True) 
     
     today = datetime.now(IST).date()
     user_id = session['user_id']
+    
+    # Fetch the user to look up their current target milestone setting
+    user = User.query.get(user_id)
 
     log = StepLog.query.filter_by(user_id=user_id, date=today).first()
     
     if log:
         if is_absolute:
-            # Foreground: The App sends the absolute total for today
             log.steps = new_steps 
             log.distance_km = new_distance
         else:
-            # Background: TaskManager sends ONLY the steps found in the last 15m
             log.steps += new_steps 
             log.distance_km += new_distance
+            
+        # ✅ UPDATE: Keep updating the row snapshot target in case they edit their goal today
+        log.target_steps = user.target_steps
     else:
-        # First steps of the day: Create a new record
+        # First steps of the day: Create a new record and capture the target snapshot
         log = StepLog(
             user_id=user_id, 
             steps=new_steps, 
             distance_km=new_distance, 
-            date=today
+            date=today,
+            target_steps=user.target_steps # ✅ FIXED: Freezes today's target goal permanently into this row
         )
         db.session.add(log)
     
@@ -144,7 +151,7 @@ def sync_steps():
     db.session.commit()
     return jsonify({"status": "success", "message": "Synced and history cleaned"}), 200
 
-# Endpoint to fetch step history for the last 15 days
+
 @app.route('/api/steps/performance', methods=['GET'])
 def get_performance():
     if 'user_id' not in session:
@@ -152,14 +159,14 @@ def get_performance():
     
     # Fetch the 15-day history in chronological order
     logs = StepLog.query.filter_by(user_id=session['user_id'])\
-                         .order_by(StepLog.date.asc()).all()
+                          .order_by(StepLog.date.asc()).all()
     
     return jsonify({
         "status": "success",
         "history": [{
             "date": l.date.strftime('%d %b'), 
             "steps": l.steps,
-            "target_steps": l.target_steps # 🔥 ADD THIS LINE: Send each day's distinct historical goal
+            "target_steps": l.target_steps # ✅ FIXED: Safely reads the row snapshot column attribute
         } for l in logs]
     }), 200
 
