@@ -20,6 +20,12 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# ✅ FIX: Prevents "Lost connection to MySQL server" crashes on the main app and background threads
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_recycle': 280,
+    'pool_pre_ping': True
+}
+
 """
 # At development 
 app.config.update(
@@ -225,7 +231,7 @@ from email.mime.multipart import MIMEMultipart
 # This function runs in a separate thread and checks every minute if it's time to send the daily reminders. It calculates the next target time (3:30 PM IST) and sleeps until then. When the time comes, it calls the send_daily_task_reminders function to send out the emails. It also keeps track of the last run time to avoid sending multiple emails if the scheduler runs multiple times within the same minute.
 def notification_scheduler():
     target_times = [
-        (22, 15)    # 10:15 PM
+        (20, 53)    # 10:15 PM
     ]
 
     last_run_times = {}  # Track last run for each target
