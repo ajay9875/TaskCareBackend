@@ -158,7 +158,8 @@ def get_performance():
         "status": "success",
         "history": [{
             "date": l.date.strftime('%d %b'), 
-            "steps": l.steps
+            "steps": l.steps,
+            "target_steps": l.target_steps # 🔥 ADD THIS LINE: Send each day's distinct historical goal
         } for l in logs]
     }), 200
 
