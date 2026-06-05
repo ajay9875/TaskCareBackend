@@ -119,7 +119,6 @@ def get_steps_data():
         "distance_km": log.distance_km if log else 0.0
     }), 200
 
-
 @app.route('/api/steps/sync', methods=['POST'])
 def sync_steps():
     if 'user_id' not in session:
@@ -230,209 +229,6 @@ def open_app():
     # This sends the user from the browser into the Android App
     print("Attempting to open the TaskCare360 application. If installed, you will be redirected shortly.")
     return redirect("taskcaremobile://login")
-
-# To send daily reminder using email to each users with their tasks
-# This function runs in a separate thread and checks every minute if it's time to send the daily reminders. It calculates the next target time (3:30 PM IST) and sleeps until then. When the time comes, it calls the send_daily_task_reminders function to send out the emails. It also keeps track of the last run time to avoid sending multiple emails if the scheduler runs multiple times within the same minute.
-def notification_scheduler():
-    target_times = [
-        (21, 35)    # 10:15 PM
-    ]
-
-    last_run_times = {}  # Track last run for each target
-
-    while True:
-        now = datetime.now(IST)
-
-        # Find the next target time
-        next_target = None
-        for hour, minute in target_times:
-            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-
-            # If target is in the past today, schedule for next day
-            if now >= target:
-                target += timedelta(days=1)
-
-            # Find the earliest upcoming target
-            if next_target is None or target < next_target:
-                next_target = target
-
-        sleep_seconds = (next_target - now).total_seconds()
-
-        if sleep_seconds > 1:
-            print(f"⏳ Next run at {next_target.strftime('%I:%M %p')} IST (in {int(sleep_seconds)}s)")
-            time.sleep(sleep_seconds)
-
-        # Verify we're at the exact target time
-        while datetime.now(IST) < next_target:
-            time.sleep(0.1)
-
-        # Check if we already ran for this specific time today
-        current_target = next_target.replace(tzinfo=None)
-        if last_run_times.get(current_target.date()) == current_target.time():
-            print(f"⏭ Already ran at {current_target.strftime('%I:%M %p')} today")
-            continue
-
-        try:
-            with app.app_context():
-                print(f"⏰ Executing scheduler for {current_target.strftime('%I:%M %p')} IST")
-                sent_msg = send_daily_task_reminders()
-
-                if sent_msg:
-                    print("✅ Reminders sent successfully")
-                    last_run_times[current_target.date()] = current_target.time()
-                else:
-                    print("ℹ️ No users needed reminders")
-
-        except Exception as e:
-            print(f"❌ Error sending notifications: {str(e)}")
-
-# This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the TaskCare360 app for maximum engagement.
-def send_daily_task_reminders():
-    sender_email = os.getenv('EMAIL_USER')
-    sender_password = os.getenv('EMAIL_PASS')
-    login_url = "https://TaskCare360.pythonanywhere.com/open-app"
-
-    if not sender_email or not sender_password:
-        print("❌ Email credentials missing")
-        return False
-
-    try:
-        users = User.query.all()
-        if not users:
-            print("No users found")
-            return False
-
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(sender_email, sender_password)
-            emails_sent = 0
-
-            for user in users:
-                try:
-                    # --- GET TODAY'S DATE PROPERLY ---
-                    today = date.today()  # This returns date object like date(2026, 5, 13)
-
-                    # Query StepLog for today - works with date objects
-                    today_stats = StepLog.query.filter_by(
-                        user_id=user.id,
-                        date=today
-                    ).first()
-
-                    steps = today_stats.steps if today_stats else 0
-                    distance = today_stats.distance_km if today_stats else 0.0
-                    calories = round(steps * 0.04, 2)
-
-                    # Goal progress
-                    target = user.target_steps if user.target_steps else 5000
-                    progress_percent = min(round((steps / target) * 100), 100)
-
-                    # Get tasks
-                    tasks = Todo.query.filter_by(user_id=user.id).order_by(Todo.SNo.desc()).all()
-
-                    # --- BUILD EMAIL HTML ---
-                    fitness_html = f"""
-                    <div style="background-color: #f0f7ff; padding: 15px; border-radius: 10px; border: 1px solid #d1e3ff; margin-bottom: 20px;">
-                        <h3 style="margin: 0 0 10px 0; color: #0056b3;">🏃 Today's Fitness Progress</h3>
-                        <table style="width: 100%; text-align: center;">
-                            <tr>
-                                <td><span style="color: #666; font-size: 12px;">Steps</span><br><strong>{steps:,} / {target:,}</strong></td>
-                                <td><span style="color: #666; font-size: 12px;">Distance</span><br><strong>{distance} km</strong></td>
-                                <td><span style="color: #666; font-size: 12px;">Calories</span><br><strong>{calories} kcal</strong></td>
-                            </tr>
-                        </table>
-                        <div style="background-color: #e0e0e0; border-radius: 5px; height: 12px; margin-top: 15px; overflow: hidden;">
-                            <div style="background-color: #28a745; width: {progress_percent}%; height: 12px;"></div>
-                        </div>
-                        <p style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;">
-                            ✅ Achieved <strong>{progress_percent}%</strong> of daily goal!
-                        </p>
-                    </div>
-                    """
-
-                    # Tasks section
-                    if not tasks:
-                        task_content = """
-                        <div style="text-align: center; padding: 20px; border: 1px dashed #ddd; border-radius: 8px;">
-                            🎉 Great job! No pending tasks. Keep it up!
-                        </div>
-                        """
-                    else:
-                        task_rows = ""
-                        for task in tasks:
-                            task_rows += f"""
-                            <tr>
-                                <td style="border:1px solid #ddd;padding:8px;">{task.title}</td>
-                                <td style="border:1px solid #ddd;padding:8px;">{task.desc or 'No description'}</td>
-                                <td style="border:1px solid #ddd;padding:8px;">{task.date_created.strftime('%Y-%m-%d')}</td>
-                            </tr>
-                            """
-
-                        task_content = f"""
-                        <h3 style="color: #333;">📋 Pending Tasks</h3>
-                        <table style="border-collapse: collapse; width: 100%;">
-                            <thead>
-                                <tr style="background-color: #f2f2f2;">
-                                    <th style="border:1px solid #ddd;padding:8px;">Title</th>
-                                    <th style="border:1px solid #ddd;padding:8px;">Description</th>
-                                    <th style="border:1px solid #ddd;padding:8px;">Date</th>
-                                </tr>
-                            </thead>
-                            <tbody>{task_rows}</tbody>
-                        </table>
-                        <p><strong>Total pending tasks:</strong> {len(tasks)}</p>
-                        """
-
-                    # Final HTML
-                    html_body = f"""
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; color: #333;">
-                        <h2>Hello, {user.name}! 👋</h2>
-                        <p>Here's your daily progress report:</p>
-
-                        {fitness_html}
-
-                        <p style="text-align: center; margin: 30px 0;">
-                            <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                                Open TaskCare 360
-                            </a>
-                        </p>
-
-                        {task_content}
-
-                        <hr style="margin: 30px 0;">
-                        <p style="font-size: 12px; color: #888; text-align: center;">
-                            TaskCare360 — Your health & productivity partner 🚀
-                        </p>
-                    </div>
-                    """
-
-                    # Send email
-                    subject = f"📊 Daily Progress - {today.strftime('%b %d')}"
-                    msg = MIMEMultipart("alternative")
-                    msg['From'] = sender_email
-                    msg['To'] = user.email
-                    msg['Subject'] = subject
-                    msg.attach(MIMEText(html_body, 'html', 'utf-8'))
-
-                    server.send_message(msg)
-                    emails_sent += 1
-                    print(f"✅ Email sent to {user.email}")
-
-                except Exception as e:
-                    print(f"❌ Failed to send to {user.email}: {str(e)}")
-                    continue
-
-            print(f"📧 Sent {emails_sent} out of {len(users)} emails")
-            return emails_sent > 0
-
-    except Exception as e:
-        print(f"❌ Fatal error in send_daily_task_reminders: {str(e)}")
-        return False
-    
-# ✅ Start scheduler only once in production (and local dev)
-def start_scheduler():
-    if os.environ.get("RUN_MAIN") != "true":  # Avoid running twice in development
-        scheduler_thread = threading.Thread(target=notification_scheduler, daemon=True)
-        scheduler_thread.start()
 
 # ======================
 # AUTH API ENDPOINTS
@@ -728,6 +524,230 @@ def api_update_todo(SNo):
 # ======================
 # INITIALIZATION
 # ======================
+# This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the TaskCare360 app for maximum engagement.
+def send_daily_task_reminders():
+    sender_email = os.getenv('EMAIL_USER')
+    sender_password = os.getenv('EMAIL_PASS')
+    login_url = "https://TaskCare360.pythonanywhere.com/open-app"
+
+    if not sender_email or not sender_password:
+        print("❌ Email credentials missing")
+        return False
+
+    try:
+        users = User.query.all()
+        if not users:
+            print("No users found")
+            return False
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            emails_sent = 0
+
+            for user in users:
+                try:
+                    # --- GET TODAY'S DATE PROPERLY ---
+                    today = date.today()  # This returns date object like date(2026, 5, 13)
+
+                    # Query StepLog for today - works with date objects
+                    today_stats = StepLog.query.filter_by(
+                        user_id=user.id,
+                        date=today
+                    ).first()
+
+                    steps = today_stats.steps if today_stats else 0
+                    distance = today_stats.distance_km if today_stats else 0.0
+                    calories = round(steps * 0.04, 2)
+
+                    # Goal progress
+                    target = user.target_steps if user.target_steps else 5000
+                    progress_percent = min(round((steps / target) * 100), 100)
+
+                    # Get tasks
+                    tasks = Todo.query.filter_by(user_id=user.id).order_by(Todo.SNo.desc()).all()
+
+                    # --- BUILD EMAIL HTML ---
+                    fitness_html = f"""
+                    <div style="background-color: #f0f7ff; padding: 15px; border-radius: 10px; border: 1px solid #d1e3ff; margin-bottom: 20px;">
+                        <h3 style="margin: 0 0 10px 0; color: #0056b3;">🏃 Today's Fitness Progress</h3>
+                        <table style="width: 100%; text-align: center;">
+                            <tr>
+                                <td><span style="color: #666; font-size: 12px;">Steps</span><br><strong>{steps:,} / {target:,}</strong></td>
+                                <td><span style="color: #666; font-size: 12px;">Distance</span><br><strong>{distance} km</strong></td>
+                                <td><span style="color: #666; font-size: 12px;">Calories</span><br><strong>{calories} kcal</strong></td>
+                            </tr>
+                        </table>
+                        <div style="background-color: #e0e0e0; border-radius: 5px; height: 12px; margin-top: 15px; overflow: hidden;">
+                            <div style="background-color: #28a745; width: {progress_percent}%; height: 12px;"></div>
+                        </div>
+                        <p style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;">
+                            ✅ Achieved <strong>{progress_percent}%</strong> of daily goal!
+                        </p>
+                    </div>
+                    """
+
+                    # Tasks section
+                    if not tasks:
+                        task_content = """
+                        <div style="text-align: center; padding: 20px; border: 1px dashed #ddd; border-radius: 8px;">
+                            🎉 Great job! No pending tasks. Keep it up!
+                        </div>
+                        """
+                    else:
+                        task_rows = ""
+                        for task in tasks:
+                            task_rows += f"""
+                            <tr>
+                                <td style="border:1px solid #ddd;padding:8px;">{task.title}</td>
+                                <td style="border:1px solid #ddd;padding:8px;">{task.desc or 'No description'}</td>
+                                <td style="border:1px solid #ddd;padding:8px;">{task.date_created.strftime('%Y-%m-%d')}</td>
+                            </tr>
+                            """
+
+                        task_content = f"""
+                        <h3 style="color: #333;">📋 Pending Tasks</h3>
+                        <table style="border-collapse: collapse; width: 100%;">
+                            <thead>
+                                <tr style="background-color: #f2f2f2;">
+                                    <th style="border:1px solid #ddd;padding:8px;">Title</th>
+                                    <th style="border:1px solid #ddd;padding:8px;">Description</th>
+                                    <th style="border:1px solid #ddd;padding:8px;">Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>{task_rows}</tbody>
+                        </table>
+                        <p><strong>Total pending tasks:</strong> {len(tasks)}</p>
+                        """
+
+                    # Final HTML
+                    html_body = f"""
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; color: #333;">
+                        <h2>Hello, {user.name}! 👋</h2>
+                        <p>Here's your daily progress report:</p>
+
+                        {fitness_html}
+
+                        <p style="text-align: center; margin: 30px 0;">
+                            <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                                Open TaskCare 360
+                            </a>
+                        </p>
+
+                        {task_content}
+
+                        <hr style="margin: 30px 0;">
+                        <p style="font-size: 12px; color: #888; text-align: center;">
+                            TaskCare360 — Your health & productivity partner 🚀
+                        </p>
+                    </div>
+                    """
+
+                    # Send email
+                    subject = f"📊 Daily Progress - {today.strftime('%b %d')}"
+                    msg = MIMEMultipart("alternative")
+                    msg['From'] = sender_email
+                    msg['To'] = user.email
+                    msg['Subject'] = subject
+                    msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+
+                    server.send_message(msg)
+                    emails_sent += 1
+                    print(f"✅ Email sent to {user.email}")
+
+                except Exception as e:
+                    print(f"❌ Failed to send to {user.email}: {str(e)}")
+                    continue
+
+            print(f"📧 Sent {emails_sent} out of {len(users)} emails")
+            return emails_sent > 0
+
+    except Exception as e:
+        print(f"❌ Fatal error in send_daily_task_reminders: {str(e)}")
+        return False
+    
+# To send daily reminder using email to each users with their tasks
+# To send daily reminder using email to each users with their tasks
+from datetime import time as datetime_time
+def notification_scheduler():
+    # Concrete 24-hour targets: (22, 15) is exactly 10:15 PM IST
+    target_times = [
+        (0, 5),   # Midnight catch-all for users who want early reminders
+    ]
+
+    print("🚀 Production notification scheduler thread active.")
+
+    while True:
+        now = datetime.now(IST)
+        current_date = now.date()
+
+        upcoming_targets = []
+
+        for hour, minute in target_times:
+            # Changed time() to datetime_time() to bypass the module name conflict
+            target_today = datetime.combine(current_date, datetime_time(hour, minute)).replace(tzinfo=IST)
+            # If target has already ticked past today, explicitly lock onto tomorrow's date structure
+            if now >= target_today:
+                target_today += timedelta(days=1)
+                
+            upcoming_targets.append(target_today)
+
+        # Sort to find the absolute closest upcoming milestone
+        upcoming_targets.sort()
+        next_target = upcoming_targets[0]
+
+        sleep_seconds = (next_target - now).total_seconds()
+
+        if sleep_seconds > 0:
+            print(f"⏳ Scheduler Status: Next run firmly locked at {next_target.strftime('%I:%M %p')} IST (sleeping {int(sleep_seconds)}s)")
+            time.sleep(sleep_seconds)
+
+        # OS Pad Protection: If the server wakes up microseconds early, drift safely into the target minute milestone
+        while datetime.now(IST) < next_target:
+            time.sleep(0.5)
+
+        # --- UNBROKEN PRODUCTION EXECUTION GATE ---
+        try:
+            with app.app_context():
+                print(f"⏰ Target Reached: Executing daily notification processing for {next_target.strftime('%I:%M %p')} IST")
+                
+                # Directly execute the script logic inside the app context hook
+                sent_msg = send_daily_task_reminders()
+
+                if sent_msg:
+                    print("✅ Reminders sent successfully")
+                else:
+                    print("ℹ️ Task round complete: No user emails required transmission.")
+
+        except Exception as e:
+            print(f"❌ Error sending notifications: {str(e)}")
+
+        # 🛡️ THE PERMANENT FIX FOR DRIFT & ENGINE RESETS:
+        # Sleep for 61 seconds immediately after the execution round finishes.
+        # This pushes the system clock safely to 10:16 PM, stepping completely over 
+        # the evaluation target window before the loop re-evaluates.
+        time.sleep(61)
+
+
+# ✅ Start scheduler only once in production (and local dev)
+def start_scheduler():
+    if os.environ.get("RUN_MAIN") != "true":  # Avoid running twice in development
+        scheduler_thread = threading.Thread(target=notification_scheduler, daemon=True)
+        scheduler_thread.start()
+
+# 🧪 TEMPORARY TEST ROUTE: Trigger emails instantly via browser
+@app.route('/api/test-email-direct')
+def test_email_direct():
+    print("🚀 Manual trigger: Executing email sequence...")
+    try:
+        # We call the function directly inside the main web process
+        emails_sent = send_daily_task_reminders()
+        if emails_sent:
+            return jsonify({"status": "success", "message": f"Successfully sent daily digest emails!"}), 200
+        else:
+            return jsonify({"status": "info", "message": "No emails sent. Check server terminal console logs."}), 200
+    except Exception as err:
+        return jsonify({"status": "error", "message": f"Direct execution crash: {str(err)}"}), 500
 
 def initialize_database():
     with app.app_context():
