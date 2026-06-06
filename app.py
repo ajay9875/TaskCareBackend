@@ -564,9 +564,9 @@ def send_daily_task_reminders():
                     target = user.target_steps if user.target_steps else 5000
                     progress_percent = min(round((steps / target) * 100), 100)
 
-                    # Get tasks
-                    tasks = Todo.query.filter_by(user_id=user.id).order_by(Todo.SNo.desc()).all()
-
+                    # 🎯 Added is_completed=False to filter out finished tasks
+                    tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
+                    
                     # --- BUILD EMAIL HTML ---
                     fitness_html = f"""
                     <div style="background-color: #f0f7ff; padding: 15px; border-radius: 10px; border: 1px solid #d1e3ff; margin-bottom: 20px;">
