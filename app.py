@@ -556,9 +556,14 @@ def send_daily_task_reminders():
                         date=today
                     ).first()
 
+                    # 🏃‍♂️ Calculate metrics dynamically using the absolute step count formulas
                     steps = today_stats.steps if today_stats else 0
-                    distance = today_stats.distance_km if today_stats else 0.0
-                    calories = round(steps * 0.04, 2)
+                    
+                    # Matches your React Native formula: (steps * 0.000762)
+                    distance = round(steps * 0.000762, 2)
+                    
+                    # Matches your React Native formula: (steps * 0.04)
+                    calories = round(steps * 0.04, 1)
 
                     # Goal progress
                     target = user.target_steps if user.target_steps else 5000
