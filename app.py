@@ -129,12 +129,21 @@ def sync_steps():
     new_distance = data.get('distance', 0.0)
     is_absolute = data.get('is_absolute', True) 
     
-    today = datetime.now(IST).date()
     user_id = session['user_id']
-    
-    # Fetch the user to look up their current target milestone setting
     user = User.query.get(user_id)
 
+    # 1. Get the exact current time in IST
+    now_ist = datetime.now(IST)
+    today = now_ist.date()
+    
+    # 🛡️ GHOST JUMP PROTECTION BLOCK
+    if now_ist.hour == 0 and now_ist.minute < 15:
+        today_log = StepLog.query.filter_by(user_id=user_id, date=today).first()
+        if not today_log or today_log.steps == 0:
+            today = today - timedelta(days=1)
+            print(f"🌙 Late night sync caught: Redirecting {new_steps} steps to yesterday ({today})")
+
+    # Fetch the row based on our corrected target date variable
     log = StepLog.query.filter_by(user_id=user_id, date=today).first()
     
     if log:
@@ -145,57 +154,68 @@ def sync_steps():
             log.steps += new_steps 
             log.distance_km += new_distance
             
-        # ✅ UPDATE: Keep updating the row snapshot target in case they edit their goal today
         log.target_steps = user.target_steps
     else:
-        # First steps of the day: Create a new record and capture the target snapshot
         log = StepLog(
             user_id=user_id, 
             steps=new_steps, 
             distance_km=new_distance, 
             date=today,
-            target_steps=user.target_steps # ✅ FIXED: Freezes today's target goal permanently into this row
+            target_steps=user.target_steps 
         )
         db.session.add(log)
     
-    # --- 15-DAY CLEANUP ---
-    cutoff_date = today - timedelta(days=15)
+    # --- 🔄 FIXED 15-DAY ROLLING CLEANUP ---
+    # Since we generate exactly the last 15 calendar days, we clean anything 
+    # strictly older than 15 days back from literal today.
+    cleanup_today = now_ist.date()
+    cutoff_date = cleanup_today - timedelta(days=15)
     StepLog.query.filter(
         StepLog.user_id == user_id, 
         StepLog.date < cutoff_date
     ).delete()
 
     db.session.commit()
-    return jsonify({"status": "success", "message": "Synced and history cleaned"}), 200
+    return jsonify({"status": "success", "message": "Synced and history cleaned", "date_applied": str(today)}), 200
 
-# Endpoint to fetch the 15-day history for the performance screen, including the correct target for each day
+
+# 📊 UPDATED: Dynamically calculates and returns exactly 15 sequential days
 @app.route('/api/steps/performance', methods=['GET'])
 def get_performance():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
     
     user = User.query.get(session['user_id'])
-    today = datetime.now(IST).date() # Ensure your IST timezone variable is accessible here
+    today = datetime.now(IST).date()
     
-    # Fetch the 15-day history in chronological order
-    logs = StepLog.query.filter_by(user_id=user.id)\
-                          .order_by(StepLog.date.asc()).all()
+    # 1. Fetch whatever logs exist for this user
+    existing_logs = StepLog.query.filter_by(user_id=user.id).all()
+    # Create a fast lookup dictionary mapping {date: log_object}
+    logs_dict = {l.date: l for l in existing_logs}
     
     history_data = []
-    for l in logs:
-        # If the log entry is for TODAY, use the live user table profile setting
-        if l.date == today:
-            current_target = user.target_steps
+    
+    # 2. Loop EXACTLY 15 times, calculating dates from 14 days ago up to today
+    for i in range(14, -1, -1):
+        target_date = today - timedelta(days=i)
+        
+        # Check if we have this date in our database lookup dictionary
+        if target_date in logs_dict:
+            db_row = logs_dict[target_date]
+            steps = db_row.steps
+            # Use current live target if evaluating today, otherwise use saved snapshot
+            current_target = user.target_steps if target_date == today else db_row.target_steps
         else:
-            # For past days, use the frozen row snapshot setting
-            current_target = l.target_steps
+            # 💡 Injection point: Day missing from DB! Generate a clean 0 step entry placeholder
+            steps = 0
+            current_target = user.target_steps if target_date == today else 1000  # Fallback goal
             
         history_data.append({
-            "date": l.date.strftime('%d %b'), 
-            "steps": l.steps,
-            "target_steps": current_target
+            "date": target_date.strftime('%d %b'), 
+            "steps": steps,
+            "target_steps": current_target if current_target else 5000
         })
-    
+        
     return jsonify({
         "status": "success",
         "history": history_data
