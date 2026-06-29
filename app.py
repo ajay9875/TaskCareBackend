@@ -609,7 +609,6 @@ def send_daily_task_reminders():
                         <p style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;">
                             ✅ Achieved <strong>{progress_percent}%</strong> of daily goal!
                         </p>
-                        
                         <p style="text-align: center; margin: 30px 0;">
                             <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
                                 Open TaskCare 360
