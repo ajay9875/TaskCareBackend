@@ -595,9 +595,6 @@ def send_daily_task_reminders():
                     # 🎯 Added is_completed=False to filter out finished tasks
                     tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
                     
-                    # ✅ Compute color string safely out-of-line to prevent f-string token conflicts
-                    remain_color = "#4ecca3" if steps_left == 0 else "#ffffff"
-
                     # --- BUILD EMAIL HTML ---
                     fitness_html = f"""
                     <div style="background-color: #16213e; padding: 24px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.08); max-width: 480px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35);">
@@ -624,8 +621,7 @@ def send_daily_task_reminders():
                                             <span style="color: #95a5a6; font-size: 10px; font-weight: 700; display: block; margin-top: 1px;">COMPLETED</span>
                                         </div>  
                                         <div style="margin-bottom: 8px;">
-                                            { # ✅ Injected safely here as a simple string reference placeholder }
-                                            <span style="color: {remain_color}; font-size: 18px; font-weight: bold; line-height: 1;">{steps_left:,}</span>
+                                            <span style="color: #ffffff; font-size: 18px; font-weight: bold; line-height: 1;">{steps_left:,}</span>
                                             <span style="color: #95a5a6; font-size: 10px; font-weight: 700; display: block; margin-top: 1px;">REMAIN</span>
                                         </div>
                                         <div>
@@ -657,6 +653,7 @@ def send_daily_task_reminders():
                         </div>
                     </div>
                     """
+
                     # Tasks section
                     if not tasks:
                         task_content = """
