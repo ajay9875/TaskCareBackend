@@ -609,6 +609,13 @@ def send_daily_task_reminders():
                         <p style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;">
                             ✅ Achieved <strong>{progress_percent}%</strong> of daily goal!
                         </p>
+                        
+                        # Url to open the app directly from the email via web url deep linking. This is critical for user engagement and retention.
+                        <p style="text-align: center; margin: 30px 0;">
+                            <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                                Open TaskCare 360
+                            </a>
+                        </p>
                     </div>
                     """
 
@@ -652,12 +659,6 @@ def send_daily_task_reminders():
                         <p>Here's your daily progress report:</p>
 
                         {fitness_html}
-
-                        <p style="text-align: center; margin: 30px 0;">
-                            <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                                Open TaskCare 360
-                            </a>
-                        </p>
 
                         {task_content}
 
