@@ -600,7 +600,7 @@ def send_daily_task_reminders():
                             <tr>
                                 <td><span style="color: #666; font-size: 12px;">Steps</span><br><strong>{steps:,} / {target:,}</strong></td>
                                 <td><span style="color: #666; font-size: 12px;">Distance</span><br><strong>{distance} km</strong></td>
-                                <td><span style="color: #666; font-size: 12px;">Calories</span><br><strong>{calories} kcal</strong></td>
+                                <td><span style="color: #666; font-size: 12px;">Calories</span><br><strong>{calories}</strong></td>
                             </tr>
                         </table>
                         <div style="background-color: #e0e0e0; border-radius: 5px; height: 12px; margin-top: 15px; overflow: hidden;">
