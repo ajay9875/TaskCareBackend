@@ -732,65 +732,68 @@ def send_daily_task_reminders():
                     # Keep legacy tracking operational just in case
                     active_minutes = round(combined_steps / 100.0, 1)
 
+                    # Email body for the fitness section
                     fitness_html = f"""
-                    <div style="background-color: #16213e; padding: 24px; border-radius: 22px; border: 1.5px solid rgba(255, 255, 255, 0.15); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35); color: #ffffff;">
+                    <div style="background-color: #16213e; padding: 24px; border-radius: 22px; border: 1.5px solid rgba(255, 255, 255, 0.12); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35); color: #ffffff;">
                         
-                        <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 17px; font-weight: 800; letter-spacing: 0.3px;">🏃 Today's Fitness Progress</h3>
+                        <div style="font-size: 16px; color: #ffffff; font-weight: 800; margin-bottom: 20px; letter-spacing: 0.3px;">
+                            📆 {today.strftime('%d %b')} Report
+                        </div>
                         
-                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 4px;">
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 4px;" cellpadding="0" cellspacing="0">
                             <tr>
-                                <td style="width: 50%; vertical-align: top; padding-right: 10px;">
-                                    <div style="margin-bottom: 12px;">
+                                <td style="width: 48%; vertical-align: top;">
+                                    <div style="margin-bottom: 12px; padding-left: 4px;">
                                         <span style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 0.8px;">🚶 WALKING</span>
                                     </div>
-                                    <div style="background-color: rgba(255, 255, 255, 0.04); padding: 12px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08);">
-                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px;">{walk_steps:,}</div>
-                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px;">STEPS</div>
+                                    <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); min-height: 150px;">
+                                        <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_steps:,}</div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>
                                         
-                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px;">{walk_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
-                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px;">DISTANCE</div>
+                                        <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_km} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>
                                         
-                                        <div style="font-size: 18px; font-weight: bold; color: #ff6b35; margin-top: 4px;">{walk_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
-                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 4px;">ENERGY</div>
+                                        <div style="font-size: 19px; font-weight: bold; color: #ff6b35; margin-top: 2px;">{walk_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
                                     </div>
                                 </td>
                                 
-                                <td style="width: 1px; border-left: 1px solid rgba(255, 255, 255, 0.15); padding: 0;"></td>
+                                <td style="width: 4%;"></td>
                                 
-                                <td style="width: 50%; vertical-align: top; padding-left: 15px;">
-                                    <div style="margin-bottom: 12px;">
+                                <td style="width: 48%; vertical-align: top;">
+                                    <div style="margin-bottom: 12px; padding-left: 4px;">
                                         <span style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 0.8px;">⚡ TREADMILL</span>
                                     </div>
-                                    <div style="background-color: rgba(255, 255, 255, 0.04); padding: 12px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08);">
-                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px;">{tread_steps:,}</div>
-                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px;">STEPS</div>
+                                    <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); min-height: 150px;">
+                                        <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_steps:,}</div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>
                                         
-                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px;">{tread_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
-                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px;">DISTANCE</div>
+                                        <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_km} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>
                                         
-                                        <div style="font-size: 18px; font-weight: bold; color: #ff6b35; margin-top: 4px;">{tread_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
-                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 4px;">ENERGY</div>
+                                        <div style="font-size: 19px; font-weight: bold; color: #ff6b35; margin-top: 2px;">{tread_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
                                     </div>
                                 </td>
                             </tr>
                         </table>
                         
-                        <div style="height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 16px 0;"></div>
+                        <div style="height: 1.5px; background-color: rgba(255, 255, 255, 0.15); margin: 24px 0 16px 0;"></div>
                         
-                        <h4 style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 1.2px; margin: 0 0 14px 0; text-align: left;">COMBINED PERFORMANCE</h4>
+                        <h4 style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 1.2px; margin: 0 0 16px 0; text-align: left;">COMBINED PERFORMANCE</h4>
                         
-                        <table style="width: 100%; border-collapse: collapse;">
+                        <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
                             <tr>
-                                <td style="width: 55%; vertical-align: middle; padding-right: 5px;">
+                                <td style="width: 55%; vertical-align: middle;">
                                     <table style="width: 100%; border-collapse: collapse;">
                                         <tr>
-                                            <td style="padding-bottom: 12px;">
+                                            <td style="padding-bottom: 14px;">
                                                 <div style="font-size: 20px; font-weight: 800; color: #ffffff; line-height: 24px;">{combined_steps:,}</div>
                                                 <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">TOTAL STEPS</div>
                                             </td>
                                         </tr>
                                         <tr>
-                                            <td style="padding-bottom: 12px;">
+                                            <td style="padding-bottom: 14px;">
                                                 <div style="font-size: 20px; font-weight: 800; color: {'#4ecca3' if steps_left == 0 else '#ffffff'}; line-height: 24px;">{steps_left:,}</div>
                                                 <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">STEPS REMAINING</div>
                                             </td>
@@ -804,18 +807,18 @@ def send_daily_task_reminders():
                                     </table>
                                 </td>
                                 
-                                <td style="width: 45%; vertical-align: middle; text-align: center; border-left: 1px solid rgba(255, 255, 255, 0.1); padding-left: 10px;">
-                                    <div style="display: inline-block; padding: 8px 16px; background-color: rgba(255, 255, 255, 0.05); border-radius: 50%; border: 4px solid #4ecca3; margin-bottom: 8px;">
-                                        <strong style="color: #ffffff; font-size: 18px; font-weight: 800;">{progress_percent}%</strong>
+                                <td style="width: 45%; vertical-align: middle; text-align: center; padding-left: 12px;">
+                                    <div style="display: inline-block; padding: 12px 20px; background-color: rgba(255, 255, 255, 0.05); border-radius: 30px; border: 2px solid #4ecca3; margin-bottom: 12px;">
+                                        <span style="color: #ffffff; font-size: 18px; font-weight: 800;">{progress_percent}%</span>
                                     </div>
                                     
-                                    <div style="width: 85%; height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 8px auto;"></div>
+                                    <div style="width: 70%; height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 0 auto 12px auto;"></div>
                                     
-                                    <div style="text-align: center; margin-top: 4px;">
-                                        <div style="color: #ffffff; font-size: 18px; font-weight: 700; margin-bottom: 4px;">
-                                            {combined_km:.2f} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">KM</span>
+                                    <div style="text-align: center;">
+                                        <div style="color: #ffffff; font-size: 18px; font-weight: 700; margin-bottom: 4px; line-height: 20px;">
+                                            {combined_km} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">KM</span>
                                         </div>
-                                        <div style="color: #ff6b35; font-size: 18px; font-weight: 700;">
+                                        <div style="color: #ff6b35; font-size: 18px; font-weight: 700; line-height: 20px;">
                                             {combined_cal} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">CAL</span>
                                         </div>
                                     </div>
@@ -823,12 +826,12 @@ def send_daily_task_reminders():
                             </tr>
                         </table>
                         
-                        <div style="background-color: rgba(255, 255, 255, 0.1); border-radius: 10px; height: 8px; overflow: hidden; margin: 20px 0 14px 0;">
+                        <div style="background-color: rgba(255, 255, 255, 0.1); border-radius: 10px; height: 8px; overflow: hidden; margin: 24px 0 14px 0;">
                             <div style="background-color: #4ecca3; width: {progress_percent}%; height: 8px; border-radius: 10px;"></div>
                         </div>
                         
-                        <div style="text-align: center; margin-top: 24px;">
-                            <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 12px 32px; text-decoration: none; border-radius: 12px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(78, 204, 163, 0.3);">
+                        <div style="text-align: center; margin-top: 28px;">
+                            <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 14px 36px; text-decoration: none; border-radius: 12px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(78, 204, 163, 0.3); letter-spacing: 0.3px;">
                                 Open TaskCare 360
                             </a>
                         </div>
