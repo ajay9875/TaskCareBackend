@@ -700,91 +700,135 @@ def send_daily_task_reminders():
             for user in users:
                 try:
                     # --- GET TODAY'S DATE PROPERLY ---
-                    today = date.today()  # This returns date object like date(2026, 5, 13)
+                    today = date.today()
 
-                    # Query StepLog for today - works with date objects
+                    # Query StepLog for today
                     today_stats = StepLog.query.filter_by(
                         user_id=user.id,
                         date=today
                     ).first()
 
-                    # 🏃‍♂️ Calculate metrics dynamically using the absolute step count formulas
-                    steps = today_stats.steps if today_stats else 0
+                    # 🏃‍♂️ Extract separated tracking data variables securely
+                    walk_steps = today_stats.walking_steps if today_stats else 0
+                    tread_steps = today_stats.treadmill_steps if today_stats else 0
                     
-                    # Matches your React Native formula: (steps * 0.000762)
-                    distance = round(steps * 0.000762, 2)
-                    
-                    # Matches your React Native formula: (steps * 0.04)
-                    calories = round(steps * 0.04, 1)
+                    # 1. Isolated Mode Calculations
+                    walk_km = round(walk_steps * 0.000762, 2)
+                    walk_cal = int(walk_steps * 0.04)
 
-                    # Goal progress
+                    tread_km = round(tread_steps * 0.000762, 2)
+                    tread_cal = int(tread_steps * 0.05)
+
+                    # 2. Combined Section Aggregations
+                    combined_steps = walk_steps + tread_steps
+                    combined_km = round(combined_steps * 0.000762, 2)
+                    combined_cal = walk_cal + tread_cal
+
+                    # Goal and progress percent configurations
                     target = user.target_steps if user.target_steps else 5000
-                    progress_percent = f"{(steps / target) * 100:.1f}"
+                    steps_left = max(0, target - combined_steps)
+                    progress_percent = min(int((combined_steps / target) * 100), 100)
 
-                    steps_left = max(0, target - steps)
-                    # Or calculate it to show one decimal point
+                    # Keep legacy tracking operational just in case
+                    active_minutes = round(combined_steps / 100.0, 1)
 
-                    active_minutes = round(steps / 100.0, 1)
-
-                    # 🎯 Added is_completed=False to filter out finished tasks
-                    tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
-                    
-                    # --- BUILD EMAIL HTML ---
                     fitness_html = f"""
-                    <div style="background-color: #16213e; padding: 24px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.08); max-width: 440px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35);">
+                    <div style="background-color: #16213e; padding: 24px; border-radius: 22px; border: 1.5px solid rgba(255, 255, 255, 0.15); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35); color: #ffffff;">
                         
-                        <!-- Title Header -->
-                        <h3 style="margin: 0 0 20px 0; color: #8ab4f8; font-size: 18px; font-weight: 700; letter-spacing: -0.3px;">🏃 Today's Fitness Progress</h3>
+                        <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 17px; font-weight: 800; letter-spacing: 0.3px;">🏃 Today's Fitness Progress</h3>
                         
-                        <!-- Row 1: Today's Steps, Distance, Calories -->
-                        <table style="width: 100%; text-align: center; margin-bottom: 16px; border-collapse: collapse;">
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 4px;">
                             <tr>
-                                <td style="width: 33.33%; vertical-align: top;">
-                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Today's Steps</span>
-                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{steps:,}</strong>
+                                <td style="width: 50%; vertical-align: top; padding-right: 10px;">
+                                    <div style="margin-bottom: 12px;">
+                                        <span style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 0.8px;">🚶 WALKING</span>
+                                    </div>
+                                    <div style="background-color: rgba(255, 255, 255, 0.04); padding: 12px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08);">
+                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px;">{walk_steps:,}</div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px;">STEPS</div>
+                                        
+                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px;">{walk_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px;">DISTANCE</div>
+                                        
+                                        <div style="font-size: 18px; font-weight: bold; color: #ff6b35; margin-top: 4px;">{walk_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 4px;">ENERGY</div>
+                                    </div>
                                 </td>
-                                <td style="width: 33.33%; vertical-align: top;">
-                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Distance</span>
-                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{distance} km</strong>
-                                </td>
-                                <td style="width: 33.33%; vertical-align: top;">
-                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Calories</span>
-                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{calories}</strong>
+                                
+                                <td style="width: 1px; border-left: 1px solid rgba(255, 255, 255, 0.15); padding: 0;"></td>
+                                
+                                <td style="width: 50%; vertical-align: top; padding-left: 15px;">
+                                    <div style="margin-bottom: 12px;">
+                                        <span style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 0.8px;">⚡ TREADMILL</span>
+                                    </div>
+                                    <div style="background-color: rgba(255, 255, 255, 0.04); padding: 12px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08);">
+                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px;">{tread_steps:,}</div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px;">STEPS</div>
+                                        
+                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px;">{tread_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px;">DISTANCE</div>
+                                        
+                                        <div style="font-size: 18px; font-weight: bold; color: #ff6b35; margin-top: 4px;">{tread_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
+                                        <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 4px;">ENERGY</div>
+                                    </div>
                                 </td>
                             </tr>
                         </table>
                         
-                        <!-- Row 2: Steps Left, Goal, Active -->
-                        <table style="width: 100%; text-align: center; margin-bottom: 24px; border-collapse: collapse;">
+                        <div style="height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 16px 0;"></div>
+                        
+                        <h4 style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 1.2px; margin: 0 0 14px 0; text-align: left;">COMBINED PERFORMANCE</h4>
+                        
+                        <table style="width: 100%; border-collapse: collapse;">
                             <tr>
-                                <td style="width: 33.33%; vertical-align: top;">
-                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Steps Left</span>
-                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{steps_left:,}</strong>
+                                <td style="width: 55%; vertical-align: middle; padding-right: 5px;">
+                                    <table style="width: 100%; border-collapse: collapse;">
+                                        <tr>
+                                            <td style="padding-bottom: 12px;">
+                                                <div style="font-size: 20px; font-weight: 800; color: #ffffff; line-height: 24px;">{combined_steps:,}</div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">TOTAL STEPS</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding-bottom: 12px;">
+                                                <div style="font-size: 20px; font-weight: 800; color: {'#4ecca3' if steps_left == 0 else '#ffffff'}; line-height: 24px;">{steps_left:,}</div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">STEPS REMAINING</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td>
+                                                <div style="font-size: 20px; font-weight: 800; color: #ffffff; line-height: 24px;">{target:,}</div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">DAILY GOAL</div>
+                                            </td>
+                                        </tr>
+                                    </table>
                                 </td>
-                                <td style="width: 33.33%; vertical-align: top;">
-                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Goal</span>
-                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{target:,}</strong>
-                                </td>
-                                <td style="width: 33.33%; vertical-align: top;">
-                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Active</span>
-                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{active_minutes} min</strong>
+                                
+                                <td style="width: 45%; vertical-align: middle; text-align: center; border-left: 1px solid rgba(255, 255, 255, 0.1); padding-left: 10px;">
+                                    <div style="display: inline-block; padding: 8px 16px; background-color: rgba(255, 255, 255, 0.05); border-radius: 50%; border: 4px solid #4ecca3; margin-bottom: 8px;">
+                                        <strong style="color: #ffffff; font-size: 18px; font-weight: 800;">{progress_percent}%</strong>
+                                    </div>
+                                    
+                                    <div style="width: 85%; height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 8px auto;"></div>
+                                    
+                                    <div style="text-align: center; margin-top: 4px;">
+                                        <div style="color: #ffffff; font-size: 18px; font-weight: 700; margin-bottom: 4px;">
+                                            {combined_km:.2f} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">KM</span>
+                                        </div>
+                                        <div style="color: #ff6b35; font-size: 18px; font-weight: 700;">
+                                            {combined_cal} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">CAL</span>
+                                        </div>
+                                    </div>
                                 </td>
                             </tr>
                         </table>
                         
-                        <!-- Slim Premium Progress Bar Container -->
-                        <div style="background-color: #2c2c35; border-radius: 10px; height: 8px; overflow: hidden; margin-bottom: 14px;">
-                            <div style="background-color: #28a745; width: {progress_percent}%; height: 8px; border-radius: 10px;"></div>
+                        <div style="background-color: rgba(255, 255, 255, 0.1); border-radius: 10px; height: 8px; overflow: hidden; margin: 20px 0 14px 0;">
+                            <div style="background-color: #4ecca3; width: {progress_percent}%; height: 8px; border-radius: 10px;"></div>
                         </div>
                         
-                        <!-- Achievement Status Label -->
-                        <p style="font-size: 14px; color: #9aa0a6; margin: 0 0 24px 0; text-align: center;">
-                            ✅ Achieved <strong style="color: #ffffff; font-weight: 600;">{progress_percent}%</strong> of daily goal!
-                        </p>
-                        
-                        <!-- Primary Blue Action Button -->
-                        <div style="text-align: center;">
-                            <a href="{login_url}" style="background-color: #007bff; color: #ffffff; padding: 12px 32px; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);">
+                        <div style="text-align: center; margin-top: 24px;">
+                            <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 12px 32px; text-decoration: none; border-radius: 12px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(78, 204, 163, 0.3);">
                                 Open TaskCare 360
                             </a>
                         </div>
@@ -792,6 +836,7 @@ def send_daily_task_reminders():
                     """
 
                     # Tasks section
+                    tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
                     if not tasks:
                         task_content = """
                         <div style="text-align: center; padding: 20px; border: 1px dashed #ddd; border-radius: 8px;">
