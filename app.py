@@ -783,7 +783,7 @@ def send_daily_task_reminders():
                                         </tr>
                                         <tr>
                                             <td style="padding-bottom: 14px;">
-                                                <div style="font-size: 20px; font-weight: 800; color: {'#4ecca3' if steps_left == 0 else '#ffffff'}; line-height: 24px;">{steps_left:,}</div>
+                                                <div style="font-size: 20px; font-weight: 800; color: {'#ffffff'}; line-height: 24px;">{steps_left:,}</div>
                                                 <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">STEPS REMAINING</div>
                                             </td>
                                         </tr>
