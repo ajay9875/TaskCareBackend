@@ -612,7 +612,7 @@ def send_daily_task_reminders():
                             <tr>
                                 <td><span style="color: #666; font-size: 12px;">Steps Left</span><br><strong>{steps_left}</strong></td>
                                 <td><span style="color: #666; font-size: 12px;">Goal</span><br><strong>{target}</strong></td>
-                                <td><span style="color: #666; font-size: 12px;">Active Minutes</span><br><strong>{active_minutes}</strong></td>
+                                <td><span style="color: #666; font-size: 12px;">Active</span><br><strong>{active_minutes} min</strong></td>
                             </tr>
                         </table>
                         <div style="background-color: #e0e0e0; border-radius: 5px; height: 12px; margin-top: 15px; overflow: hidden;">
