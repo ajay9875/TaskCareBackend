@@ -606,7 +606,7 @@ def send_daily_task_reminders():
                             <div style="clear: both;"></div>
                         </div>
                         <div style="background-color: rgba(255, 255, 255, 0.08); border-radius: 10px; height: 8px; overflow: hidden; margin-bottom: 24px;">
-                            <div style="background-color: #4ecca3; width: {progress_percent:.1f}%; height: 8px; border-radius: 10px;"></div>
+                            <div style="background-color: #4ecca3; width: {progress_percent}%; height: 8px; border-radius: 10px;"></div>
                         </div>
                         <div style="background-color: rgba(255, 255, 255, 0.02); border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.04); padding: 4px 16px;">
                             <table style="width: 100%; border-collapse: collapse; margin: 14px 0;">
