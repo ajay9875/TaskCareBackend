@@ -242,13 +242,12 @@ def contact_support():
     print("Attempting to open the Eamil application.")
     return redirect("taskcaremobile://support")
 
-# Open app using web route for login page
+# Open app using web route for dashboard redirection
 @app.route('/open-app')
 def open_app():
-    # Update this to match your app.json scheme!
-    # This sends the user from the browser into the Android App
-    print("Attempting to open the TaskCare360 application. If installed, you will be redirected shortly.")
-    return redirect("taskcaremobile://login")
+    # ✅ Updated scheme path from 'login' to 'dashboard' to target the home file directly
+    print("Attempting to open the TaskCare360 Dashboard application. If installed, you will be redirected shortly.")
+    return redirect("taskcaremobile://dashboard")
 
 # ======================
 # AUTH API ENDPOINTS
