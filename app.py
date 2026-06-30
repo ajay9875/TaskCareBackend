@@ -700,7 +700,7 @@ def send_daily_task_reminders():
             for user in users:
                 try:
                     # --- GET TODAY'S DATE PROPERLY ---
-                    today = date.today()
+                    today = datetime.now(IST).strftime("%Y-%m-%d")
 
                     # Query StepLog for today
                     today_stats = StepLog.query.filter_by(
@@ -727,10 +727,7 @@ def send_daily_task_reminders():
                     # Goal and progress percent configurations
                     target = user.target_steps if user.target_steps else 5000
                     steps_left = max(0, target - combined_steps)
-                    progress_percent = min(int((combined_steps / target) * 100), 100)
-
-                    # Keep legacy tracking operational just in case
-                    active_minutes = round(combined_steps / 100.0, 1)
+                    progress_percent = (combined_steps / target) * 100
 
                     # Email body for the fitness section
                     fitness_html = f"""
