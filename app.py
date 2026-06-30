@@ -599,33 +599,63 @@ def send_daily_task_reminders():
                     
                     # --- BUILD EMAIL HTML ---
                     fitness_html = f"""
-                    <div style="background-color: #f0f7ff; padding: 15px; border-radius: 10px; border: 1px solid #d1e3ff; margin-bottom: 20px;">
-                        <h3 style="margin: 0 0 10px 0; color: #0056b3;">🏃 Today's Fitness Progress</h3>
-                        <table style="width: 100%; text-align: center;">
+                    <div style="background-color: #16213e; padding: 24px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.08); max-width: 440px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35);">
+                        
+                        <!-- Title Header -->
+                        <h3 style="margin: 0 0 20px 0; color: #8ab4f8; font-size: 18px; font-weight: 700; letter-spacing: -0.3px;">🏃 Today's Fitness Progress</h3>
+                        
+                        <!-- Row 1: Today's Steps, Distance, Calories -->
+                        <table style="width: 100%; text-align: center; margin-bottom: 16px; border-collapse: collapse;">
                             <tr>
-                                <td><span style="color: #666; font-size: 12px;">Today's Steps</span><br><strong>{steps}</strong></td>
-                                <td><span style="color: #666; font-size: 12px;">Distance</span><br><strong>{distance} km</strong></td>
-                                <td><span style="color: #666; font-size: 12px;">Calories</span><br><strong>{calories}</strong></td>
+                                <td style="width: 33.33%; vertical-align: top;">
+                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Today's Steps</span>
+                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{steps:,}</strong>
+                                </td>
+                                <td style="width: 33.33%; vertical-align: top;">
+                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Distance</span>
+                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{distance} km</strong>
+                                </td>
+                                <td style="width: 33.33%; vertical-align: top;">
+                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Calories</span>
+                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{calories}</strong>
+                                </td>
                             </tr>
                         </table>
-                        <table style="width: 100%; text-align: center;">
+                        
+                        <!-- Row 2: Steps Left, Goal, Active -->
+                        <table style="width: 100%; text-align: center; margin-bottom: 24px; border-collapse: collapse;">
                             <tr>
-                                <td><span style="color: #666; font-size: 12px;">Steps Left</span><br><strong>{steps_left}</strong></td>
-                                <td><span style="color: #666; font-size: 12px;">Goal</span><br><strong>{target}</strong></td>
-                                <td><span style="color: #666; font-size: 12px;">Active</span><br><strong>{active_minutes} min</strong></td>
+                                <td style="width: 33.33%; vertical-align: top;">
+                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Steps Left</span>
+                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{steps_left:,}</strong>
+                                </td>
+                                <td style="width: 33.33%; vertical-align: top;">
+                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Goal</span>
+                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{target:,}</strong>
+                                </td>
+                                <td style="width: 33.33%; vertical-align: top;">
+                                    <span style="color: #9aa0a6; font-size: 13px; display: block; margin-bottom: 2px;">Active</span>
+                                    <strong style="color: #ffffff; font-size: 18px; font-weight: 700;">{active_minutes} min</strong>
+                                </td>
                             </tr>
                         </table>
-                        <div style="background-color: #e0e0e0; border-radius: 5px; height: 12px; margin-top: 15px; overflow: hidden;">
-                            <div style="background-color: #28a745; width: {progress_percent}%; height: 12px;"></div>
+                        
+                        <!-- Slim Premium Progress Bar Container -->
+                        <div style="background-color: #2c2c35; border-radius: 10px; height: 8px; overflow: hidden; margin-bottom: 14px;">
+                            <div style="background-color: #28a745; width: {progress_percent}%; height: 8px; border-radius: 10px;"></div>
                         </div>
-                        <p style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;">
-                            ✅ Achieved <strong>{progress_percent}%</strong> of daily goal!
+                        
+                        <!-- Achievement Status Label -->
+                        <p style="font-size: 14px; color: #9aa0a6; margin: 0 0 24px 0; text-align: center;">
+                            ✅ Achieved <strong style="color: #ffffff; font-weight: 600;">{progress_percent}%</strong> of daily goal!
                         </p>
-                        <p style="text-align: center; margin: 30px 0;">
-                            <a href="{login_url}" style="background-color: #007bff; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                        
+                        <!-- Primary Blue Action Button -->
+                        <div style="text-align: center;">
+                            <a href="{login_url}" style="background-color: #007bff; color: #ffffff; padding: 12px 32px; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);">
                                 Open TaskCare 360
                             </a>
-                        </p>
+                        </div>
                     </div>
                     """
 
