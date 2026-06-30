@@ -700,8 +700,8 @@ def send_daily_task_reminders():
             for user in users:
                 try:
                     # --- GET TODAY'S DATE PROPERLY ---
-                    today = datetime.now(IST).strftime("%Y-%m-%d")
-
+                    today = datetime.now(IST).date()
+                    
                     # Query StepLog for today
                     today_stats = StepLog.query.filter_by(
                         user_id=user.id,
