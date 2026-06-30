@@ -701,16 +701,24 @@ def send_daily_task_reminders():
                 try:
                     # --- GET TODAY'S DATE PROPERLY ---
                     today = datetime.now(IST).date()
-                    
+
                     # Query StepLog for today
                     today_stats = StepLog.query.filter_by(
                         user_id=user.id,
                         date=today
                     ).first()
 
+                    # 🛑 CRASH-PROOF EXISTENCE GATE: 
+                    # First check if today_stats is None safely. If it is None, or if both fields are 0, skip.
                     # 🏃‍♂️ Extract separated tracking data variables securely
                     walk_steps = today_stats.walking_steps if today_stats else 0
                     tread_steps = today_stats.treadmill_steps if today_stats else 0
+
+                    # 🛑 CRASH-PROOF EXISTENCE GATE: 
+                    # Check the local step integers directly. If both are 0, skip!
+                    if walk_steps == 0 and tread_steps == 0:
+                        print(f"⏭️ Skipping email for {user.name}: No tracking activity logged for today ({today})")
+                        continue
                     
                     # 1. Isolated Mode Calculations
                     walk_km = round(walk_steps * 0.000762, 2)
