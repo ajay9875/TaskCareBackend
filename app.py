@@ -700,9 +700,7 @@ def send_daily_task_reminders():
             for user in users:
                 try:
                     # --- GET TODAY'S DATE PROPERLY ---
-                    #today = datetime.now(IST).date()
-                    # --- GET TODAY'S DATE PROPERLY ---
-                    today = date.today()  # This returns date object like date(2026, 5, 13)
+                    today = datetime.now(IST).date()
                     
                     # Query StepLog for today
                     today_stats = StepLog.query.filter_by(
@@ -710,39 +708,35 @@ def send_daily_task_reminders():
                         date=today
                     ).first()
 
-                    # 🛑 CRASH-PROOF EXISTENCE GATE: 
-                    # First check if today_stats is None safely. If it is None, or if both fields are 0, skip.
                     # 🏃‍♂️ Extract separated tracking data variables securely
                     walk_steps = today_stats.walking_steps if today_stats else 0
                     tread_steps = today_stats.treadmill_steps if today_stats else 0
+                    
+                    # Pull tasks early to determine if we should skip the email entirely
+                    tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
 
-                    # 🛑 CRASH-PROOF EXISTENCE GATE: 
-                    # Check the local step integers directly. If both are 0, skip!
-                    if walk_steps == 0 and tread_steps == 0:
-                        print(f"⏭️ Skipping email for {user.name}: No tracking activity logged for today ({today})")
+                    # 🛑 TOTAL EMPTY GATING ACTION:
+                    # If they have NO steps AND NO pending tasks, skip the email completely.
+                    if walk_steps == 0 and tread_steps == 0 and not tasks:
+                        print(f"Skip email for {user.name}: No active steps and no tasks pending today.")
                         continue
 
                     # 📊 CASE 1: User HAS step data today -> Render full premium report card
                     if walk_steps > 0 or tread_steps > 0:
-                    
-                        # 1. Isolated Mode Calculations
                         walk_km = round(walk_steps * 0.000762, 2)
                         walk_cal = int(walk_steps * 0.04)
 
                         tread_km = round(tread_steps * 0.000762, 2)
                         tread_cal = int(tread_steps * 0.05)
 
-                        # 2. Combined Section Aggregations
                         combined_steps = walk_steps + tread_steps
                         combined_km = round(combined_steps * 0.000762, 2)
                         combined_cal = walk_cal + tread_cal
 
-                        # Goal and progress percent configurations
                         target = user.target_steps if user.target_steps else 5000
                         steps_left = max(0, target - combined_steps)
-                        progress_percent = (combined_steps / target) * 100
+                        progress_percent = min(int((combined_steps / target) * 100), 100) if target > 0 else 0
 
-                        # Email body for the fitness section
                         fitness_html = f"""
                         <div style="background-color: #16213e; padding: 24px; border-radius: 22px; border: 1.5px solid rgba(255, 255, 255, 0.12); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35); color: #ffffff;">
                             <div style="font-size: 16px; color: #ffffff; font-weight: 800; margin-bottom: 20px; letter-spacing: 0.3px;">
@@ -757,13 +751,13 @@ def send_daily_task_reminders():
                                         <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); min-height: 150px;">
                                             <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_steps:,}</div>
                                             <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>                                        
-                                            <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_km} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
+                                            <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
                                             <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>             
                                             <div style="font-size: 19px; font-weight: bold; color: #ff6b35; margin-top: 2px;">{walk_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
                                             <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
                                         </div>
                                     </td>
-                                    <td style="width: 4%;"></td>                               
+                                    <td style="width: 4%;"></td>                                              
                                     <td style="width: 48%; vertical-align: top;">
                                         <div style="margin-bottom: 12px; padding-left: 4px;">
                                             <span style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 0.8px;">⚡ TREADMILL</span>
@@ -771,7 +765,7 @@ def send_daily_task_reminders():
                                         <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); min-height: 150px;">
                                             <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_steps:,}</div>
                                             <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>                                      
-                                            <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_km} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
+                                            <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
                                             <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>             
                                             <div style="font-size: 19px; font-weight: bold; color: #ff6b35; margin-top: 2px;">{tread_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
                                             <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
@@ -793,7 +787,7 @@ def send_daily_task_reminders():
                                             </tr>
                                             <tr>
                                                 <td style="padding-bottom: 14px;">
-                                                    <div style="font-size: 20px; font-weight: 800; color: {'#ffffff'}; line-height: 24px;">{steps_left:,}</div>
+                                                    {f'<div style="font-size: 20px; font-weight: 800; color: #4ecca3; line-height: 24px;">{steps_left:,}</div>' if steps_left == 0 else f'<div style="font-size: 20px; font-weight: 800; color: #ffffff; line-height: 24px;">{steps_left:,}</div>'}
                                                     <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">STEPS REMAINING</div>
                                                 </td>
                                             </tr>
@@ -807,12 +801,12 @@ def send_daily_task_reminders():
                                     </td> 
                                     <td style="width: 45%; vertical-align: middle; text-align: center; padding-left: 12px;">
                                         <div style="display: inline-block; padding: 12px 20px; background-color: rgba(255, 255, 255, 0.05); border-radius: 30px; border: 2px solid #4ecca3; margin-bottom: 12px;">
-                                            <span style="color: #ffffff; font-size: 18px; font-weight: 800;">{progress_percent}%</span>
+                                            <strong style="color: #ffffff; font-size: 18px; font-weight: 800;">{progress_percent}%</strong>
                                         </div>          
                                         <div style="width: 70%; height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 0 auto 12px auto;"></div>                   
                                         <div style="text-align: center;">
                                             <div style="color: #ffffff; font-size: 18px; font-weight: 700; margin-bottom: 4px; line-height: 20px;">
-                                                {combined_km} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">KM</span>
+                                                {combined_km:.2f} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">KM</span>
                                             </div>
                                             <div style="color: #ff6b35; font-size: 18px; font-weight: 700; line-height: 20px;">
                                                 {combined_cal} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">CAL</span>
@@ -831,7 +825,6 @@ def send_daily_task_reminders():
                             </div>
                         </div>
                         """
-                    
                     else:
                         # 🚫 CASE 2: User HAS NO step data today -> Render the premium dashed empty block placeholder
                         fitness_html = f"""
@@ -850,11 +843,10 @@ def send_daily_task_reminders():
                         </div>
                         """
 
-                    # Tasks section
-                    tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
+                    # Tasks section rendering framework
                     if not tasks:
                         task_content = """
-                        <div style="text-align: center; padding: 20px; border: 1px dashed #ddd; border-radius: 8px;">
+                        <div style="text-align: center; padding: 20px; border: 1px dashed #ddd; border-radius: 8px; font-family: Arial, sans-serif;">
                             🎉 Great job! No pending tasks. Keep it up!
                         </div>
                         """
@@ -870,21 +862,21 @@ def send_daily_task_reminders():
                             """
 
                         task_content = f"""
-                        <h3 style="color: #333;">📋 Pending Tasks</h3>
-                        <table style="border-collapse: collapse; width: 100%;">
+                        <h3 style="color: #333; font-family: Arial, sans-serif;">📋 Pending Tasks</h3>
+                        <table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif;">
                             <thead>
                                 <tr style="background-color: #f2f2f2;">
-                                    <th style="border:1px solid #ddd;padding:8px;">Title</th>
-                                    <th style="border:1px solid #ddd;padding:8px;">Description</th>
-                                    <th style="border:1px solid #ddd;padding:8px;">Date</th>
+                                    <th style="border:1px solid #ddd;padding:8px;text-align:left;">Title</th>
+                                    <th style="border:1px solid #ddd;padding:8px;text-align:left;">Description</th>
+                                    <th style="border:1px solid #ddd;padding:8px;text-align:left;">Date</th>
                                 </tr>
                             </thead>
                             <tbody>{task_rows}</tbody>
                         </table>
-                        <p><strong>Total pending tasks:</strong> {len(tasks)}</p>
+                        <p style="font-family: Arial, sans-serif;"><strong>Total pending tasks:</strong> {len(tasks)}</p>
                         """
 
-                    # Final HTML
+                    # Final HTML Assembly
                     html_body = f"""
                     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; color: #333;">
                         <h2>Hello, {user.name}! 👋</h2>
@@ -901,7 +893,7 @@ def send_daily_task_reminders():
                     </div>
                     """
 
-                    # Send email
+                    # Send email out to active user mailbox
                     subject = f"📊 Daily Progress - {today.strftime('%b %d')}"
                     msg = MIMEMultipart("alternative")
                     msg['From'] = sender_email
