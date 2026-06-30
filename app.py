@@ -587,9 +587,8 @@ def send_daily_task_reminders():
 
                     # Goal progress
                     target = user.target_steps if user.target_steps else 5000
-                    progress_percent = round(((steps / target) * 100), 1)
+                    progress_percent = f"{(steps / target) * 100:.1f}"
 
-                    visual_progress = min(progress_percent, 100.0)
                     steps_left = max(0, target - steps)
 
                     # 🎯 Added is_completed=False to filter out finished tasks
@@ -597,57 +596,69 @@ def send_daily_task_reminders():
                     
                     # --- BUILD EMAIL HTML ---
                     fitness_html = f"""
-                    <div style="background-color: #16213e; padding: 24px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.08); max-width: 480px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35);">
-                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-                            <tr>
-                                <td style="text-align: left;">
-                                    <span style="color: #4ecca3; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; display: block; margin-bottom: 2px;">Activity Report</span>
-                                    <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 800; letter-spacing: -0.5px;">Fitness Progress</h3>
-                                </td>
-                                <td style="text-align: right; vertical-align: bottom;">
-                                    <span style="color: #4ecca3; background-color: rgba(78, 204, 163, 0.1); border: 1px solid rgba(78, 204, 163, 0.2); padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; display: inline-block;">
-                                        {visual_progress:.1f}% Done
-                                    </span>
-                                </td>
-                            </tr>
-                        </table>
-                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 22px;">
-                            <tr>
-                                <td style="width: 55%; vertical-align: top; padding-right: 12px;">
-                                    <div style="background-color: rgba(255, 255, 255, 0.03); border-radius: 14px; padding: 14px; border: 1px solid rgba(255, 255, 255, 0.04); min-height: 120px;">
-                                        <span style="color: #4ecca3; font-size: 10px; font-weight: 800; letter-spacing: 1px; display: block; margin-bottom: 6px;">STEPS</span>
-                                        <div style="margin-bottom: 8px;">
-                                            <span style="color: #ffffff; font-size: 22px; font-weight: bold; line-height: 1;">{steps:,}</span>
-                                            <span style="color: #95a5a6; font-size: 10px; font-weight: 700; display: block; margin-top: 1px;">COMPLETED</span>
-                                        </div>  
-                                        <div style="margin-bottom: 8px;">
-                                            <span style="color: #ffffff; font-size: 18px; font-weight: bold; line-height: 1;">{steps_left:,}</span>
-                                            <span style="color: #95a5a6; font-size: 10px; font-weight: 700; display: block; margin-top: 1px;">REMAIN</span>
-                                        </div>
-                                        <div>
-                                            <span style="color: #ffffff; font-size: 16px; font-weight: bold; line-height: 1; opacity: 0.9;">{target:,}</span>
-                                            <span style="color: #95a5a6; font-size: 10px; font-weight: 700; display: block; margin-top: 1px;">DAILY GOAL</span>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td style="width: 45%; vertical-align: top;">
-                                    <div style="background-color: rgba(255, 255, 255, 0.03); border-radius: 14px; padding: 14px; border: 1px solid rgba(255, 255, 255, 0.04); min-height: 120px; text-align: center;">
-                                        <span style="color: #4ecca3; font-size: 10px; font-weight: 800; letter-spacing: 1px; display: block; margin-bottom: 12px; text-align: center;">ACTIVITY</span>
-                                        <div style="margin-bottom: 14px;">
-                                            <span style="color: #ffffff; font-size: 18px; font-weight: bold;">{distance} <span style="color: #95a5a6; font-size: 10px; font-weight: 600;">KM</span></span>
-                                        </div>
-                                        <div>
-                                            <span style="color: #ff6b35; font-size: 18px; font-weight: bold;">{calories} <span style="color: #95a5a6; font-size: 10px; font-weight: 600;">CAL</span></span>
-                                        </div>
-                                    </div>
-                                </td>
-                            </tr>
-                        </table>
-                        <div style="background-color: rgba(255, 255, 255, 0.08); border-radius: 10px; height: 8px; overflow: hidden; position: relative;">
-                            <div style="background-color: #4ecca3; width: {visual_progress}%; height: 8px; border-radius: 10px;"></div>
+                    <div style="background-color: #16213e; padding: 24px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.08); max-width: 400px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35);">                       
+                        <div style="margin-bottom: 24px;">
+                            <span style="color: #4ecca3; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; display: block; margin-bottom: 4px;">Activity Report</span>
+                            <h3 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 800; display: inline-block; vertical-align: middle;">Fitness Progress</h3>
+                            <span style="float: right; color: #4ecca3; background-color: rgba(78, 204, 163, 0.1); padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; margin-top: 2px;">
+                                {progress_percent}%
+                            </span>
+                            <div style="clear: both;"></div>
                         </div>
-                        <div style="margin-top: 28px; text-align: center;">
-                            <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 12px 30px; text-decoration: none; border-radius: 12px; font-size: 14px; font-weight: bold; display: inline-block; letter-spacing: 0.3px; transition: all 0.2s ease;">
+                        <div style="background-color: rgba(255, 255, 255, 0.08); border-radius: 10px; height: 8px; overflow: hidden; margin-bottom: 24px;">
+                            <div style="background-color: #4ecca3; width: {progress_percent:.1f}%; height: 8px; border-radius: 10px;"></div>
+                        </div>
+                        <div style="background-color: rgba(255, 255, 255, 0.02); border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.04); padding: 4px 16px;">
+                            <table style="width: 100%; border-collapse: collapse; margin: 14px 0;">
+                                <tr>
+                                    <td style="width: 32px; vertical-align: middle;">
+                                        <img src="https://img.icons8.com/ios-glyphs/60/4ecca3/walking.png" width="22" height="22" alt="walk" style="display: block;" />
+                                    </td>
+                                    <td style="vertical-align: middle;">
+                                        <span style="color: #95a5a6; font-size: 11px; font-weight: 700; display: block; letter-spacing: 0.5px;">COMPLETED</span>
+                                        <span style="color: #ffffff; font-size: 18px; font-weight: bold;">{steps:,} <span style="font-size: 12px; color: #95a5a6; font-weight: normal;">Steps</span></span>
+                                    </td>
+                                </tr>
+                            </table>
+                            <div style="height: 1px; background-color: rgba(255, 255, 255, 0.06);"></div>
+                            <table style="width: 100%; border-collapse: collapse; margin: 14px 0;">
+                                <tr>
+                                    <td style="width: 32px; vertical-align: middle;">
+                                        <img src="https://img.icons8.com/ios-glyphs/60/95a5a6/flag.png" width="20" height="20" alt="remain" style="display: block;" />
+                                    </td>
+                                    <td style="vertical-align: middle;">
+                                        <span style="color: #95a5a6; font-size: 11px; font-weight: 700; display: block; letter-spacing: 0.5px;">REMAINING</span>
+                                        <span style="color: #ffffff; font-size: 18px; font-weight: bold;">{steps_left:,} <span style="font-size: 12px; color: #95a5a6; font-weight: normal;">Steps</span></span>
+                                    </td>
+                                </tr>
+                            </table>
+                            <div style="height: 1px; background-color: rgba(255, 255, 255, 0.06);"></div>
+                            <table style="width: 100%; border-collapse: collapse; margin: 14px 0;">
+                                <tr>
+                                    <td style="width: 32px; vertical-align: middle;">
+                                        <img src="https://img.icons8.com/ios-glyphs/60/4ecca3/marker.png" width="20" height="20" alt="distance" style="display: block;" />
+                                    </td>
+                                    <td style="vertical-align: middle;">
+                                        <span style="color: #95a5a6; font-size: 11px; font-weight: 700; display: block; letter-spacing: 0.5px;">DISTANCE</span>
+                                        <span style="color: #ffffff; font-size: 18px; font-weight: bold;">{distance} <span style="font-size: 12px; color: #95a5a6; font-weight: normal;">KM</span></span>
+                                    </td>
+                                </tr>
+                            </table>
+                            <div style="height: 1px; background-color: rgba(255, 255, 255, 0.06);"></div>
+                            <table style="width: 100%; border-collapse: collapse; margin: 14px 0;">
+                                <tr>
+                                    <td style="width: 32px; vertical-align: middle;">
+                                        <img src="https://img.icons8.com/ios-glyphs/60/ff6b35/fire-element.png" width="20" height="20" alt="calories" style="display: block;" />
+                                    </td>
+                                    <td style="vertical-align: middle;">
+                                        <span style="color: #95a5a6; font-size: 11px; font-weight: 700; display: block; letter-spacing: 0.5px;">CALORIES BURNED</span>
+                                        <span style="color: #ff6b35; font-size: 18px; font-weight: bold;">{calories} <span style="font-size: 12px; color: #95a5a6; font-weight: normal;">CAL</span></span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div style="margin-top: 24px; text-align: center;">
+                            <a href="{login_url}" style="background-color: #007bff; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 12px; font-size: 14px; font-weight: bold; display: inline-block; letter-spacing: 0.3px; box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);">
                                 Open TaskCare 360 App
                             </a>
                         </div>
