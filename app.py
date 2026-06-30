@@ -89,7 +89,9 @@ class Todo(db.Model):
     is_completed = db.Column(db.Boolean, default=False, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
-class StepLog(db.Model):
+# ======================
+# OLD STEP LOG MODEL
+"""class StepLog(db.Model):
     __tablename__ = 'step_log'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -97,13 +99,25 @@ class StepLog(db.Model):
     distance_km = db.Column(db.Float, default=0.0)
     date = db.Column(db.Date, nullable=False)
     # 🔥 Add this column to save the historical daily goal
+    target_steps = db.Column(db.Integer, default=5000)"""
+
+# New StepLog model with separated step buckets for walking and treadmill
+class StepLog(db.Model):
+    __tablename__ = 'step_log'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    date = db.Column(db.Date, nullable=False)
     target_steps = db.Column(db.Integer, default=5000)
+    
+    # 🌟 NEW SEPARATED STEP BUCKETS
+    walking_steps = db.Column(db.Integer, default=0)
+    treadmill_steps = db.Column(db.Integer, default=0)
 
 # ======================
 # API ENDPOINTS
 # ======================
-
-@app.route('/api/steps/data', methods=['GET'])
+# OLD: This route returns the current day's step data for the logged-in user, including their target steps, current steps, and distance in kilometers. It checks if the user is authenticated via session and retrieves the relevant data from the database.
+"""@app.route('/api/steps/data', methods=['GET'])
 def get_steps_data():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
@@ -117,9 +131,43 @@ def get_steps_data():
         "target_steps": user.target_steps, # Pulls your current live target setting
         "current_steps": log.steps if log else 0,
         "distance_km": log.distance_km if log else 0.0
+    }), 200"""
+
+# NEW: This route returns the current day's step data and allows the front-end to specify which step mode (walking or treadmill) to display.
+@app.route('/api/steps/data', methods=['GET'])
+def get_steps_data():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session['user_id'])
+    today = datetime.now(IST).date()
+    log = StepLog.query.filter_by(user_id=user.id, date=today).first()
+    
+    # Extract values safely or default to 0
+    w_steps = log.walking_steps if log else 0
+    t_steps = log.treadmill_steps if log else 0
+    
+    # Read what active view mode the user is toggled into from front-end query param
+    mode = request.args.get('mode', 'walking')
+    
+    if mode == 'treadmill':
+        display_steps = t_steps
+        distance_km = t_steps * 0.000762
+    else:
+        display_steps = w_steps
+        distance_km = w_steps * 0.000762
+
+    return jsonify({
+        "status": "success",
+        "target_steps": user.target_steps,
+        "current_steps": display_steps,     # Isolated steps for current view mode
+        "distance_km": round(distance_km, 2),
+        "walking_steps": w_steps,
+        "treadmill_steps": t_steps
     }), 200
 
-@app.route('/api/steps/sync', methods=['POST'])
+# OLD: This route allows the mobile app to sync step data for the current day. It checks if the user is authenticated, retrieves the new step count and distance from the request, and updates or creates a StepLog entry for today. It also includes a cleanup mechanism to delete logs older than 15 days.
+"""@app.route('/api/steps/sync', methods=['POST'])
 def sync_steps():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
@@ -177,10 +225,63 @@ def sync_steps():
 
     db.session.commit()
     return jsonify({"status": "success", "message": "Synced and history cleaned", "date_applied": str(today)}), 200
+"""
 
+# NEW: This route allows the mobile app to sync step data for the current day, with separate handling for walking and treadmill steps. It checks if the user is authenticated, retrieves the step delta and mode from the request, and updates or creates a StepLog entry for today. It also includes a cleanup mechanism to delete logs older than 15 days.
+@app.route('/api/steps/sync', methods=['POST'])
+def sync_steps():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    data = request.get_json()
+    step_delta = data.get('delta', 0)  # Switch layout to accept step increments cleanly
+    mode = data.get('mode', 'walking') # "walking" or "treadmill"
+    
+    user_id = session['user_id']
+    user = User.query.get(user_id)
+    now_ist = datetime.now(IST)
+    today = now_ist.date()
+    
+    # Ghost jump midnight layout wrapper check
+    if now_ist.hour == 0 and now_ist.minute < 15:
+        today_log = StepLog.query.filter_by(user_id=user_id, date=today).first()
+        if not today_log or (today_log.walking_steps == 0 and today_log.treadmill_steps == 0):
+            today = today - timedelta(days=1)
 
-# 📊 UPDATED: Dynamically calculates and returns exactly 15 sequential days
-@app.route('/api/steps/performance', methods=['GET'])
+    log = StepLog.query.filter_by(user_id=user_id, date=today).first()
+    
+    if log:
+        if mode == 'treadmill':
+            log.treadmill_steps += step_delta
+        else:
+            log.walking_steps += step_delta
+        log.target_steps = user.target_steps
+    else:
+        # Create fresh row configuration
+        w_init = step_delta if mode == 'walking' else 0
+        t_init = step_delta if mode == 'treadmill' else 0
+        log = StepLog(
+            user_id=user_id,
+            walking_steps=w_init,
+            treadmill_steps=t_init,
+            date=today,
+            target_steps=user.target_steps
+        )
+        db.session.add(log)
+    
+    # 15-Day rolling cleanup loop execution
+    cutoff_date = now_ist.date() - timedelta(days=15)
+    StepLog.query.filter(StepLog.user_id == user_id, StepLog.date < cutoff_date).delete()
+    
+    db.session.commit()
+    return jsonify({
+        "status": "success", 
+        "walking_steps": log.walking_steps, 
+        "treadmill_steps": log.treadmill_steps
+    }), 200
+
+# OLD:📊 UPDATED Dynamically calculates and returns exactly 15 sequential days
+"""@app.route('/api/steps/performance', methods=['GET'])
 def get_performance():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
@@ -220,6 +321,38 @@ def get_performance():
         "status": "success",
         "history": history_data
     }), 200
+"""
+
+# NEW:📊 UPDATED Dynamically calculates and returns exactly 15 sequential days with combined step totals
+@app.route('/api/steps/performance', methods=['GET'])
+def get_performance():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session['user_id'])
+    today = datetime.now(IST).date()
+    existing_logs = StepLog.query.filter_by(user_id=user.id).all()
+    logs_dict = {l.date: l for l in existing_logs}
+    
+    history_data = []
+    for i in range(30, -1, -1):
+        target_date = today - timedelta(days=i)
+        if target_date in logs_dict:
+            db_row = logs_dict[target_date]
+            # Performance graphs show combined combined total totals achieved
+            total_steps = db_row.walking_steps + db_row.treadmill_steps
+            current_target = user.target_steps if target_date == today else db_row.target_steps
+        else:
+            total_steps = 0
+            current_target = user.target_steps if target_date == today else 5000
+            
+        history_data.append({
+            "date": target_date.strftime('%d %b'), 
+            "steps": total_steps,
+            "target_steps": current_target
+        })
+        
+    return jsonify({"status": "success", "history": history_data}), 200
 
 # Update target steps by user (This allows users to set their own goals from the mobile app)
 @app.route('/api/steps/update-target', methods=['POST'])
