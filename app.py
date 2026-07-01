@@ -324,6 +324,7 @@ def get_performance():
 """
 
 # NEW:📊 UPDATED Dynamically calculates and returns exactly 15 sequential days with combined step totals
+# 📊 FIXED: Dynamically calculates and returns 30 sequential days with fully separated mode tracking data
 @app.route('/api/steps/performance', methods=['GET'])
 def get_performance():
     if 'user_id' not in session:
@@ -339,16 +340,21 @@ def get_performance():
         target_date = today - timedelta(days=i)
         if target_date in logs_dict:
             db_row = logs_dict[target_date]
-            # Performance graphs show combined combined total totals achieved
-            total_steps = db_row.walking_steps + db_row.treadmill_steps
-            current_target = user.target_steps if target_date == today else db_row.target_steps
+            w_steps = db_row.walking_steps if db_row.walking_steps is not None else 0
+            t_steps = db_row.treadmill_steps if db_row.treadmill_steps is not None else 0
+            total_steps = w_steps + t_steps
+            current_target = user.target_steps if target_date == today else (db_row.target_steps or 5000)
         else:
+            w_steps = 0
+            t_steps = 0
             total_steps = 0
             current_target = user.target_steps if target_date == today else 5000
             
         history_data.append({
             "date": target_date.strftime('%d %b'), 
             "steps": total_steps,
+            "walking_steps": w_steps,      # ✅ FIXED: Now passed cleanly to support left column layout
+            "treadmill_steps": t_steps,    # ✅ FIXED: Now passed cleanly to support right column layout
             "target_steps": current_target
         })
         
