@@ -396,6 +396,24 @@ def open_app():
 def default():
     return jsonify({"message": "Welcome to the TaskCare API, Backend is working successfully!"}), 200
 
+# ============================================
+# ✅ EMAIL VALIDATION FUNCTION
+# ============================================
+
+from email_validator import validate_email, EmailNotValidError
+
+def validate_email_address(email):
+    """
+    Validate email address in Flask using email-validator
+    """
+    try:
+        # Validates email structure and normalizes it
+        valid = validate_email(email, check_deliverability=False)
+        return True, None
+    except EmailNotValidError as e:
+        # Returns False and the specific validation error message
+        return False, str(e)
+
 @app.route('/api/signup', methods=['POST'])
 def signup():
     data = request.get_json()
@@ -405,6 +423,14 @@ def signup():
 
     if not name or not email or not password:
         return jsonify({"status": "error", "message": "All fields are required"}), 400
+
+    is_valid, error_msg = validate_email_address(email)
+    
+    if not is_valid:
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid email format: {error_msg}"
+        }), 400
 
     if User.query.filter_by(email=email).first():
         return jsonify({"status": "error", "message": "Email already registered"}), 400
