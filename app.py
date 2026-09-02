@@ -400,63 +400,189 @@ def default():
 # ✅ EMAIL VALIDATION FUNCTION
 # ============================================
 
-# 1. Initialize standalone Django settings for Flask
-import django
-from django.conf import settings
+import re
+import dns.resolver
+from email_validator import validate_email, EmailNotValidError
 
-if not settings.configured:
-    settings.configure(
-        USE_I18N=False,
-        SECRET_KEY='flask-django-validator-key'
-    )
-    django.setup()
+# List of disposable email domains (partial list)
+DISPOSABLE_DOMAINS = {
+    'tempmail.com', '10minutemail.com', 'throwaway.com', 'guerrillamail.com',
+    'mailinator.com', 'yopmail.com', 'getnada.com', 'temp-mail.org',
+    'mailnator.com', 'trashmail.com', 'spambox.us', 'spamgourmet.com',
+    'mailexpire.com', 'spambox.fr', 'spambox.info', 'spambox.me',
+    'spambox.us', 'spambox.xyz', 'tempmail.net', 'tempinbox.com'
+}
 
-# ============================================
-# ✅ DJANGO-POWERED EMAIL VALIDATOR IN FLASK
-# ============================================
-from django.core.validators import EmailValidator
-from django.core.exceptions import ValidationError
+# Common typos to correct
+COMMON_TYPOS = {
+    'gmail.con': 'gmail.com',
+    'gmal.com': 'gmail.com',
+    'gmial.com': 'gmail.com',
+    'gmil.com': 'gmail.com',
+    'yaho.com': 'yahoo.com',
+    'yhoo.com': 'yahoo.com',
+    'yohoo.com': 'yahoo.com',
+    'hotmal.com': 'hotmail.com',
+    'hotmil.com': 'hotmail.com',
+    'outlok.com': 'outlook.com',
+    'outloook.com': 'outlook.com',
+}
 
-def validate_email_address(email):
+# Role-based emails to reject
+ROLE_EMAILS = {
+    'admin', 'support', 'info', 'contact', 'noreply', 'no-reply',
+    'help', 'sales', 'marketing', 'webmaster', 'postmaster'
+}
+
+def validate_email_address(email, check_disposable=True, check_role=True, auto_correct_typos=True):
     """
-    Validate email inside Flask using Django's EmailValidator
+    Complete email validation with all checks
+    
+    Args:
+        email: Email address to validate
+        check_disposable: Check against disposable email domains
+        check_role: Reject role-based emails
+        auto_correct_typos: Auto-correct common typos
+    
+    Returns:
+        tuple: (is_valid, message, corrected_email)
     """
-    validator = EmailValidator()
+    if not email:
+        return False, "Email is required", None
+    
+    # Clean and lower case
+    email = email.strip().lower()
+    
+    # 1. BASIC FORMAT VALIDATION
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, email):
+        return False, "Invalid email format. Please enter a valid email address.", None
+    
+    # Extract local part and domain
     try:
-        validator(email)
-        return True, None
-    except ValidationError as e:
-        # Safe extraction of Django's validation error text
-        error_text = e.messages[0] if hasattr(e, 'messages') else str(e)
-        return False, error_text
+        local_part, domain = email.split('@')
+    except ValueError:
+        return False, "Invalid email format", None
+    
+    # 2. LENGTH CHECKS
+    if len(local_part) > 64:
+        return False, "Email local part is too long (max 64 characters)", None
+    
+    if len(domain) > 255:
+        return False, "Email domain is too long (max 255 characters)", None
+    
+    # 3. AUTO-CORRECT COMMON TYPOS
+    original_domain = domain
+    if auto_correct_typos and domain in COMMON_TYPOS:
+        domain = COMMON_TYPOS[domain]
+        corrected_email = f"{local_part}@{domain}"
+        email = corrected_email
+        print(f"🔄 Auto-corrected email: {original_domain} → {domain}")
+    
+    # 4. CHECK ROLE-BASED EMAILS
+    if check_role and local_part in ROLE_EMAILS:
+        return False, "Please use a personal email address instead of a role-based one (admin@, info@, etc.)", None
+    
+    # 5. CHECK DISPOSABLE EMAILS
+    if check_disposable and domain in DISPOSABLE_DOMAINS:
+        return False, "Disposable/temporary email addresses are not allowed. Please use a permanent email.", None
+    
+    # 6. DOMAIN EXISTENCE CHECK (MX Records)
+    try:
+        # Quick DNS check without requiring dnspython in some environments
+        import socket
+        # Check if domain has MX record
+        try:
+            dns.resolver.resolve(domain, 'MX')
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
+            return False, f"Domain '{domain}' does not appear to be valid", None
+        except Exception as e:
+            # If DNS lookup fails, still continue with email-validator
+            print(f"⚠️ DNS lookup warning: {str(e)}")
+    except ImportError:
+        # dnspython not installed - skip MX check
+        print("ℹ️ dnspython not installed, skipping MX validation")
+    except Exception as e:
+        print(f"⚠️ Domain validation warning: {str(e)}")
+    
+    # 7. COMPREHENSIVE EMAIL-VALIDATOR CHECK
+    try:
+        # With deliverability check
+        valid = validate_email(email, check_deliverability=True)
+        return True, "Email is valid", valid.normalized
+    except EmailNotValidError as e:
+        # Specific error from email-validator
+        error_msg = str(e)
+        
+        # Provide user-friendly error messages
+        if "domain does not exist" in error_msg.lower():
+            return False, f"The domain '{domain}' does not exist. Please check for typos.", None
+        elif "disposable email address" in error_msg.lower():
+            return False, "Please use a permanent email address, not a temporary one.", None
+        elif "mailbox does not exist" in error_msg.lower():
+            return False, "This email address does not appear to be valid.", None
+        else:
+            return False, f"Invalid email: {error_msg}", None
+    except Exception as e:
+        return False, f"Email validation failed: {str(e)}", None
 
+# ============================================
+# UPDATED SIGNUP ROUTE WITH COMPLETE VALIDATION
+# ============================================
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    data = request.get_json() or {}
+    data = request.get_json()
     name = data.get('name', '').strip()
     email = data.get('email', '').strip().lower()
     password = data.get('password')
 
-    if not name or not email or not password:
-        return jsonify({"status": "error", "message": "All fields are required"}), 400
+    # 1. Basic field validation
+    if not name:
+        return jsonify({"status": "error", "message": "Full name is required"}), 400
+    
+    if not email:
+        return jsonify({"status": "error", "message": "Email is required"}), 400
+    
+    if not password:
+        return jsonify({"status": "error", "message": "Password is required"}), 400
 
-    # 🛑 1. Validate email structure/format using Django validator
-    is_valid_email, email_error_message = validate_email_address(email)
-    if not is_valid_email:
+    # 2. Name validation (minimum length)
+    if len(name) < 2:
+        return jsonify({"status": "error", "message": "Name must be at least 2 characters long"}), 400
+
+    # 3. Password strength validation
+    if len(password) < 8:
+        return jsonify({"status": "error", "message": "Password must be at least 8 characters long"}), 400
+    
+    # Check if password is too common
+    common_passwords = {'password', '12345678', 'qwerty123', 'admin123', 'password123'}
+    if password in common_passwords:
+        return jsonify({"status": "error", "message": "Password is too common. Please choose a stronger password"}), 400
+
+    # 4. COMPLETE EMAIL VALIDATION
+    is_valid, error_msg, corrected_email = validate_email_address(email)
+    
+    if not is_valid:
         return jsonify({
             "status": "error",
-            "message": f"Invalid email format: {email_error_message}",
+            "message": error_msg,
             "code": "INVALID_EMAIL"
         }), 400
 
+    # Use corrected email if auto-correction happened
+    if corrected_email and corrected_email != email:
+        email = corrected_email
+
+    # 5. Check if email already registered
     if User.query.filter_by(email=email).first():
         return jsonify({
-            "status": "error",
-            "message": "Email already registered",
+            "status": "error", 
+            "message": "This email is already registered. Please login or use a different email.",
             "code": "EMAIL_EXISTS"
         }), 400
 
+    # 6. Create user
     try:
         new_user = User(
             name=name,
@@ -465,11 +591,25 @@ def signup():
         )
         db.session.add(new_user)
         db.session.commit()
-        return jsonify({"status": "success", "message": "Account created!"}), 201
-
+        
+        return jsonify({
+            "status": "success", 
+            "message": "Account created successfully! Please login.",
+            "user": {
+                "id": new_user.id,
+                "name": new_user.name,
+                "email": new_user.email
+            }
+        }), 201
+        
     except Exception as e:
         db.session.rollback()
-        return jsonify({"status": "error", "message": "Database error."}), 500
+        print(f"❌ Database error during signup: {str(e)}")
+        return jsonify({
+            "status": "error", 
+            "message": "An error occurred during registration. Please try again.",
+            "code": "DATABASE_ERROR"
+        }), 500
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -635,19 +775,33 @@ def send_otp(email):
 def api_forgot_password():
     data = request.get_json()
     email = data.get('email', "").strip().lower()
+
+    if not email:
+        return jsonify({"status": "error", "message": "Email is required"}), 400
+
+    # ✅ Use the same validation
+    is_valid, error_msg, corrected_email = validate_email_address(email)
+    
+    if not is_valid:
+        return jsonify({"status": "error", "message": error_msg}), 400
+
+    if corrected_email and corrected_email != email:
+        email = corrected_email
+
     user = User.query.filter_by(email=email).first()
+    
+    if not user:
+        # Don't reveal if email exists or not (security)
+        return jsonify({"status": "success", "message": "If the email exists, an OTP has been sent"}), 200
 
-    if user:
-        otp_code = send_otp(email) # Capture the returned OTP
-        if otp_code:
-            # ✅ SAVE TO DATABASE (Required for Mobile)
-            user.otp = otp_code
-            user.otp_expiry = datetime.now() + timedelta(minutes=5)
-            db.session.commit()
-            return jsonify({"status": "success", "message": "OTP sent"}), 200
-        return jsonify({"status": "error", "message": "Failed to send email"}), 500
-
-    return jsonify({"status": "error", "message": "Email not found"}), 404
+    otp_code = send_otp(email)
+    if otp_code:
+        user.otp = otp_code
+        user.otp_expiry = datetime.now() + timedelta(minutes=5)
+        db.session.commit()
+        return jsonify({"status": "success", "message": "OTP sent successfully"}), 200
+    
+    return jsonify({"status": "error", "message": "Failed to send OTP"}), 500
 
 # 2. Verify OTP (As you wrote it, it's perfect once the DB is populated)
 @app.route('/api/verify_otp', methods=['POST'])
