@@ -411,30 +411,26 @@ if not settings.configured:
     )
     django.setup()
 
-# 2. Import Django's native EmailValidator and ValidationError
-from django.core.validators import EmailValidator
-from django.core.exceptions import ValidationError
-
-
 # ============================================
 # ✅ DJANGO-POWERED EMAIL VALIDATOR IN FLASK
 # ============================================
+from django.core.validators import EmailValidator
+from django.core.exceptions import ValidationError
+
 def validate_email_address(email):
     """
-    Validate email inside Flask using Django's exact EmailValidator
+    Validate email inside Flask using Django's EmailValidator
     """
     validator = EmailValidator()
     try:
         validator(email)
         return True, None
     except ValidationError as e:
-        # Returns Django's exact default error message ("Enter a valid email address.")
-        return False, e.message
+        # Safe extraction of Django's validation error text
+        error_text = e.messages[0] if hasattr(e, 'messages') else str(e)
+        return False, error_text
 
 
-# ============================================
-# ✅ FLASK SIGNUP ENDPOINT
-# ============================================
 @app.route('/api/signup', methods=['POST'])
 def signup():
     data = request.get_json() or {}
@@ -445,7 +441,7 @@ def signup():
     if not name or not email or not password:
         return jsonify({"status": "error", "message": "All fields are required"}), 400
 
-    # 🛑 Run Django's validator directly
+    # 🛑 1. Validate email structure/format using Django validator
     is_valid_email, email_error_message = validate_email_address(email)
     if not is_valid_email:
         return jsonify({
