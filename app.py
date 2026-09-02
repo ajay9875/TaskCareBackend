@@ -400,23 +400,44 @@ def default():
 # ✅ EMAIL VALIDATION FUNCTION
 # ============================================
 
-from email_validator import validate_email, EmailNotValidError
+# 1. Initialize standalone Django settings for Flask
+import django
+from django.conf import settings
 
+if not settings.configured:
+    settings.configure(
+        USE_I18N=False,
+        SECRET_KEY='flask-django-validator-key'
+    )
+    django.setup()
+
+# 2. Import Django's native EmailValidator and ValidationError
+from django.core.validators import EmailValidator
+from django.core.exceptions import ValidationError
+
+
+# ============================================
+# ✅ DJANGO-POWERED EMAIL VALIDATOR IN FLASK
+# ============================================
 def validate_email_address(email):
     """
-    Validate email address in Flask using email-validator
+    Validate email inside Flask using Django's exact EmailValidator
     """
+    validator = EmailValidator()
     try:
-        # Validates email structure and normalizes it
-        valid = validate_email(email, check_deliverability=False)
+        validator(email)
         return True, None
-    except EmailNotValidError as e:
-        # Returns False and the specific validation error message
-        return False, str(e)
+    except ValidationError as e:
+        # Returns Django's exact default error message ("Enter a valid email address.")
+        return False, e.message
 
+
+# ============================================
+# ✅ FLASK SIGNUP ENDPOINT
+# ============================================
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    data = request.get_json()
+    data = request.get_json() or {}
     name = data.get('name', '').strip()
     email = data.get('email', '').strip().lower()
     password = data.get('password')
@@ -424,16 +445,21 @@ def signup():
     if not name or not email or not password:
         return jsonify({"status": "error", "message": "All fields are required"}), 400
 
-    is_valid, error_msg = validate_email_address(email)
-    
-    if not is_valid:
+    # 🛑 Run Django's validator directly
+    is_valid_email, email_error_message = validate_email_address(email)
+    if not is_valid_email:
         return jsonify({
             "status": "error",
-            "message": f"Invalid email format: {error_msg}"
+            "message": f"Invalid email format: {email_error_message}",
+            "code": "INVALID_EMAIL"
         }), 400
 
     if User.query.filter_by(email=email).first():
-        return jsonify({"status": "error", "message": "Email already registered"}), 400
+        return jsonify({
+            "status": "error",
+            "message": "Email already registered",
+            "code": "EMAIL_EXISTS"
+        }), 400
 
     try:
         new_user = User(
@@ -444,9 +470,10 @@ def signup():
         db.session.add(new_user)
         db.session.commit()
         return jsonify({"status": "success", "message": "Account created!"}), 201
+
     except Exception as e:
         db.session.rollback()
-        return jsonify({"status": "error", "message": "Database error. Please try again."}), 500
+        return jsonify({"status": "error", "message": "Database error."}), 500
 
 @app.route('/api/login', methods=['POST'])
 def login():
