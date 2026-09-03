@@ -401,31 +401,15 @@ def default():
 # ============================================
 
 import re
-import dns.resolver
 from email_validator import validate_email, EmailNotValidError
 
-# List of disposable email domains (partial list)
+# List of disposable email domains
 DISPOSABLE_DOMAINS = {
     'tempmail.com', '10minutemail.com', 'throwaway.com', 'guerrillamail.com',
     'mailinator.com', 'yopmail.com', 'getnada.com', 'temp-mail.org',
     'mailnator.com', 'trashmail.com', 'spambox.us', 'spamgourmet.com',
     'mailexpire.com', 'spambox.fr', 'spambox.info', 'spambox.me',
-    'spambox.us', 'spambox.xyz', 'tempmail.net', 'tempinbox.com'
-}
-
-# Common typos to correct
-COMMON_TYPOS = {
-    'gmail.con': 'gmail.com',
-    'gmal.com': 'gmail.com',
-    'gmial.com': 'gmail.com',
-    'gmil.com': 'gmail.com',
-    'yaho.com': 'yahoo.com',
-    'yhoo.com': 'yahoo.com',
-    'yohoo.com': 'yahoo.com',
-    'hotmal.com': 'hotmail.com',
-    'hotmil.com': 'hotmail.com',
-    'outlok.com': 'outlook.com',
-    'outloook.com': 'outlook.com',
+    'spambox.xyz', 'tempmail.net', 'tempinbox.com'
 }
 
 # Role-based emails to reject
@@ -434,18 +418,12 @@ ROLE_EMAILS = {
     'help', 'sales', 'marketing', 'webmaster', 'postmaster'
 }
 
-def validate_email_address(email, check_disposable=True, check_role=True, auto_correct_typos=True):
+def validate_email_address(email, check_disposable=True, check_role=True):
     """
-    Complete email validation with all checks
-    
-    Args:
-        email: Email address to validate
-        check_disposable: Check against disposable email domains
-        check_role: Reject role-based emails
-        auto_correct_typos: Auto-correct common typos
+    Clean email validation checking syntax, account roles, disposable domains, and DNS/MX deliverability.
     
     Returns:
-        tuple: (is_valid, message, corrected_email)
+        tuple: (is_valid, message, normalized_email)
     """
     if not email:
         return False, "Email is required", None
@@ -471,58 +449,32 @@ def validate_email_address(email, check_disposable=True, check_role=True, auto_c
     if len(domain) > 255:
         return False, "Email domain is too long (max 255 characters)", None
     
-    # 3. AUTO-CORRECT COMMON TYPOS
-    original_domain = domain
-    if auto_correct_typos and domain in COMMON_TYPOS:
-        domain = COMMON_TYPOS[domain]
-        corrected_email = f"{local_part}@{domain}"
-        email = corrected_email
-        print(f"🔄 Auto-corrected email: {original_domain} → {domain}")
-    
-    # 4. CHECK ROLE-BASED EMAILS
+    # 3. CHECK ROLE-BASED EMAILS
     if check_role and local_part in ROLE_EMAILS:
         return False, "Please use a personal email address instead of a role-based one (admin@, info@, etc.)", None
     
-    # 5. CHECK DISPOSABLE EMAILS
+    # 4. CHECK DISPOSABLE EMAILS
     if check_disposable and domain in DISPOSABLE_DOMAINS:
         return False, "Disposable/temporary email addresses are not allowed. Please use a permanent email.", None
     
-    # 6. DOMAIN EXISTENCE CHECK (MX Records)
+    # 5. COMPREHENSIVE EMAIL-VALIDATOR CHECK (Handles MX and deliverability checks internally)
     try:
-        # Quick DNS check without requiring dnspython in some environments
-        import socket
-        # Check if domain has MX record
-        try:
-            dns.resolver.resolve(domain, 'MX')
-        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
-            return False, f"Domain '{domain}' does not appear to be valid", None
-        except Exception as e:
-            # If DNS lookup fails, still continue with email-validator
-            print(f"⚠️ DNS lookup warning: {str(e)}")
-    except ImportError:
-        # dnspython not installed - skip MX check
-        print("ℹ️ dnspython not installed, skipping MX validation")
-    except Exception as e:
-        print(f"⚠️ Domain validation warning: {str(e)}")
-    
-    # 7. COMPREHENSIVE EMAIL-VALIDATOR CHECK
-    try:
-        # With deliverability check
         valid = validate_email(email, check_deliverability=True)
         return True, "Email is valid", valid.normalized
+        
     except EmailNotValidError as e:
-        # Specific error from email-validator
         error_msg = str(e)
         
-        # Provide user-friendly error messages
-        if "domain does not exist" in error_msg.lower():
-            return False, f"The domain '{domain}' does not exist. Please check for typos.", None
+        # User-friendly error messages
+        if "domain does not exist" in error_msg.lower() or "no mx record" in error_msg.lower():
+            return False, f"The domain '{domain}' does not exist or cannot receive emails. Please check for typos.", None
         elif "disposable email address" in error_msg.lower():
             return False, "Please use a permanent email address, not a temporary one.", None
         elif "mailbox does not exist" in error_msg.lower():
             return False, "This email address does not appear to be valid.", None
         else:
             return False, f"Invalid email: {error_msg}", None
+            
     except Exception as e:
         return False, f"Email validation failed: {str(e)}", None
 
@@ -532,44 +484,41 @@ def validate_email_address(email, check_disposable=True, check_role=True, auto_c
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    data = request.get_json()
+    data = request.get_json() or {}
     name = data.get('name', '').strip()
     email = data.get('email', '').strip().lower()
     confirm_email = data.get('cemail', '').strip().lower()
     password = data.get('password')
 
-    # 1. Basic field validation
+    # 1. Basic field checks
     if not name:
         return jsonify({"status": "error", "message": "Full name is required"}), 400
+
+    if len(name) < 2:
+        return jsonify({"status": "error", "message": "Name must be at least 2 characters long"}), 400
     
     if not email:
         return jsonify({"status": "error", "message": "Email is required"}), 400
     
     if not confirm_email:
         return jsonify({"status": "error", "message": "Please confirm your email"}), 400
-    
+
+    # 2. Match check (Do this BEFORE running DNS validation)
     if email != confirm_email:
         return jsonify({"status": "error", "message": "Emails do not match"}), 400
 
     if not password:
         return jsonify({"status": "error", "message": "Password is required"}), 400
 
-    # 2. Name validation (minimum length)
-    if len(name) < 2:
-        return jsonify({"status": "error", "message": "Name must be at least 2 characters long"}), 400
-
-    # 3. Password strength validation
     if len(password) < 8:
         return jsonify({"status": "error", "message": "Password must be at least 8 characters long"}), 400
     
-    # Check if password is too common
     common_passwords = {'password', '12345678', 'qwerty123', 'admin123', 'password123'}
     if password in common_passwords:
         return jsonify({"status": "error", "message": "Password is too common. Please choose a stronger password"}), 400
 
-    # 4. COMPLETE EMAIL VALIDATION
-    is_valid, error_msg, corrected_email = validate_email_address(email)
-    
+    # 3. Email validation (Runs without auto-correction)
+    is_valid, error_msg, normalized_email = validate_email_address(email)
     if not is_valid:
         return jsonify({
             "status": "error",
@@ -577,11 +526,9 @@ def signup():
             "code": "INVALID_EMAIL"
         }), 400
 
-    # Use corrected email if auto-correction happened
-    if corrected_email and corrected_email != email:
-        email = corrected_email
+    email = normalized_email
 
-    # 5. Check if email already registered
+    # 4. Check if user exists
     if User.query.filter_by(email=email).first():
         return jsonify({
             "status": "error", 
@@ -589,7 +536,7 @@ def signup():
             "code": "EMAIL_EXISTS"
         }), 400
 
-    # 6. Create user
+    # 5. Create user
     try:
         new_user = User(
             name=name,
