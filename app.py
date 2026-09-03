@@ -535,6 +535,7 @@ def signup():
     data = request.get_json()
     name = data.get('name', '').strip()
     email = data.get('email', '').strip().lower()
+    confirm_email = data.get('cemail', '').strip().lower()
     password = data.get('password')
 
     # 1. Basic field validation
@@ -544,6 +545,12 @@ def signup():
     if not email:
         return jsonify({"status": "error", "message": "Email is required"}), 400
     
+    if not confirm_email:
+        return jsonify({"status": "error", "message": "Please confirm your email"}), 400
+    
+    if email != confirm_email:
+        return jsonify({"status": "error", "message": "Emails do not match"}), 400
+
     if not password:
         return jsonify({"status": "error", "message": "Password is required"}), 400
 
