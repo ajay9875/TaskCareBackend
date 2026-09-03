@@ -605,6 +605,68 @@ def get_dashboard_data():
         "date_updated": t.date_updated.isoformat() if t.date_updated else None} for t in all_tasks]
     }), 200
 
+
+# Fetch user profile data
+@app.route('/api/profile', methods=['GET'])
+def get_profile():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"status": "error", "message": "Session expired"}), 401
+
+    user = User.query.get(user_id)
+    if not user:
+        session.clear()
+        return jsonify({"status": "error", "message": "User not found"}), 401
+
+    return jsonify({
+        "status": "success",
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email
+        }
+    }), 200
+
+# Update profile details
+@app.route('/api/profile/update', methods=['POST'])
+def update_profile():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"status": "error", "message": "Session expired"}), 401
+
+    user = User.query.get(user_id)
+    if not user:
+        session.clear()
+        return jsonify({"status": "error", "message": "User not found"}), 401
+
+    data = request.get_json() or {}
+    new_name = data.get('name', '').strip()
+    new_email = data.get('email', '').strip().lower()
+
+    if not new_name or not new_email:
+        return jsonify({"status": "error", "message": "Name and email are required"}), 400
+
+    # Check if the new email is already taken by another account
+    existing_user = User.query.filter(User.email == new_email, User.id != user.id).first()
+    if existing_user:
+        return jsonify({"status": "error", "message": "Email is already in use"}), 400
+
+    user.name = new_name
+    user.email = new_email
+    session['username'] = new_name  # Keep session username synced
+
+    db.session.commit()
+
+    return jsonify({
+        "status": "success",
+        "message": "Profile updated successfully",
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email
+        }
+    }), 200
+
 # ======================
 # LOGOUT API
 # ======================
