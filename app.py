@@ -113,6 +113,14 @@ class StepLog(db.Model):
     walking_steps = db.Column(db.Integer, default=0)
     treadmill_steps = db.Column(db.Integer, default=0)
 
+
+class StepSyncEvent(db.Model):
+    __tablename__ = 'step_sync_event'
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
 # ======================
 # API ENDPOINTS
 # ======================
@@ -234,11 +242,39 @@ def sync_steps():
         return jsonify({"error": "Unauthorized"}), 401
     
     data = request.get_json()
-    step_delta = data.get('delta', 0)  # Switch layout to accept step increments cleanly
-    mode = data.get('mode', 'walking') # "walking" or "treadmill"
+    step_delta = data.get('delta', 0)
+    mode = data.get('mode', 'walking')
+    event_id = data.get('event_id')
+
+    if not isinstance(step_delta, int) or isinstance(step_delta, bool) or step_delta <= 0:
+        return jsonify({"error": "delta must be a positive integer"}), 400
+    if mode not in ('walking', 'treadmill'):
+        return jsonify({"error": "mode must be walking or treadmill"}), 400
+    if not isinstance(event_id, str) or not event_id.strip():
+        return jsonify({"error": "event_id is required"}), 400
     
     user_id = session['user_id']
     user = User.query.get(user_id)
+    if user is None:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Retries must be safe: the client keeps an event until it receives a
+    # successful response, so a timed-out request can arrive more than once.
+    existing_event = StepSyncEvent.query.filter_by(
+        event_id=event_id,
+        user_id=user_id
+    ).first()
+    if existing_event:
+        log = StepLog.query.filter_by(
+            user_id=user_id,
+            date=datetime.now(IST).date()
+        ).first()
+        return jsonify({
+            "status": "success",
+            "duplicate": True,
+            "walking_steps": log.walking_steps if log else 0,
+            "treadmill_steps": log.treadmill_steps if log else 0
+        }), 200
     now_ist = datetime.now(IST)
     today = now_ist.date()
     
@@ -252,9 +288,9 @@ def sync_steps():
     
     if log:
         if mode == 'treadmill':
-            log.treadmill_steps += step_delta
+            log.treadmill_steps = (log.treadmill_steps or 0) + step_delta
         else:
-            log.walking_steps += step_delta
+            log.walking_steps = (log.walking_steps or 0) + step_delta
         log.target_steps = user.target_steps
     else:
         # Create fresh row configuration
@@ -268,6 +304,8 @@ def sync_steps():
             target_steps=user.target_steps
         )
         db.session.add(log)
+
+    db.session.add(StepSyncEvent(event_id=event_id, user_id=user_id))
     
     # 15-Day rolling cleanup loop execution
     cutoff_date = now_ist.date() - timedelta(days=15)
