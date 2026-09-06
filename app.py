@@ -250,8 +250,10 @@ def sync_steps():
         return jsonify({"error": "delta must be a positive integer"}), 400
     if mode not in ('walking', 'treadmill'):
         return jsonify({"error": "mode must be walking or treadmill"}), 400
-    if not isinstance(event_id, str) or not event_id.strip():
-        return jsonify({"error": "event_id is required"}), 400
+    if event_id is not None and (
+        not isinstance(event_id, str) or not event_id.strip()
+    ):
+        return jsonify({"error": "event_id must be a non-empty string"}), 400
     
     user_id = session['user_id']
     user = User.query.get(user_id)
@@ -263,7 +265,7 @@ def sync_steps():
     existing_event = StepSyncEvent.query.filter_by(
         event_id=event_id,
         user_id=user_id
-    ).first()
+    ).first() if event_id else None
     if existing_event:
         log = StepLog.query.filter_by(
             user_id=user_id,
@@ -305,7 +307,8 @@ def sync_steps():
         )
         db.session.add(log)
 
-    db.session.add(StepSyncEvent(event_id=event_id, user_id=user_id))
+    if event_id:
+        db.session.add(StepSyncEvent(event_id=event_id, user_id=user_id))
     
     # 15-Day rolling cleanup loop execution
     cutoff_date = now_ist.date() - timedelta(days=15)
