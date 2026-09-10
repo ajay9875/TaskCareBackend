@@ -19,6 +19,7 @@ import os
 import ssl # Added for secure connection
 from email.message import EmailMessage
 from flask_migrate import Migrate  # 🚀 Import Flask-Migrate
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 load_dotenv()      
 
@@ -58,6 +59,7 @@ app.config.update(
 db = SQLAlchemy(app)
 
 migrate = Migrate(app, db)  # 🚀 Initialize Migrate with your app and db
+sync_token_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -177,7 +179,16 @@ def get_steps_data():
 # OLD: This route allows the mobile app to sync step data for the current day. It checks if the user is authenticated, retrieves the new step count and distance from the request, and updates or creates a StepLog entry for today. It also includes a cleanup mechanism to delete logs older than 15 days.
 """@app.route('/api/steps/sync', methods=['POST'])
 def sync_steps():
-    if 'user_id' not in session:
+    user_id = session.get('user_id')
+    bearer = request.headers.get('Authorization', '')
+    if not user_id and bearer.startswith('Bearer '):
+        try:
+            payload = sync_token_serializer.loads(bearer[7:], max_age=30 * 24 * 60 * 60)
+            user_id = int(payload['user_id'])
+        except (BadSignature, KeyError, TypeError, ValueError):
+            user_id = None
+
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
     
     data = request.get_json()
@@ -185,7 +196,6 @@ def sync_steps():
     new_distance = data.get('distance', 0.0)
     is_absolute = data.get('is_absolute', True) 
     
-    user_id = session['user_id']
     user = User.query.get(user_id)
 
     # 1. Get the exact current time in IST
@@ -619,7 +629,8 @@ def login():
 
         return jsonify({
             "status": "success",
-            "user": {"id": user.id, "name": user.name}
+            "user": {"id": user.id, "name": user.name},
+            "step_sync_token": sync_token_serializer.dumps({"user_id": user.id}),
         }), 200
 
     return jsonify({"status": "error", "message": "Invalid email or password"}), 401
@@ -1198,13 +1209,17 @@ def send_daily_email():
 
 def initialize_database():
     with app.app_context():
-        # Cleaned up the empty raw SQL try/except block. 
-        # Flask-Migrate completely replaces manual query checks!
+        # Create newly added tables when the WSGI app starts in production.
         db.create_all()
         print("✅ Database initialized successfully")
 
+
+# PythonAnywhere loads this module through WSGI instead of __main__.
+# Run the idempotent table creation there as well so new sync tables exist
+# before the first mobile synchronization request.
+initialize_database()
+
 if __name__ == '__main__':
-    initialize_database()
     # 0.0.0.0 is critical for the Android emulator to find your laptop
     debug_mode = os.getenv('DEBUG', 'False').lower() == 'true'
 
