@@ -241,8 +241,8 @@ def sync_steps():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
     
-    data = request.get_json()
-    step_delta = data.get('delta', 0)
+    data = request.get_json(silent=True) or {}
+    step_delta = data.get('delta', data.get('steps', 0))
     mode = data.get('mode', 'walking')
     event_id = data.get('event_id')
 
