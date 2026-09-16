@@ -256,14 +256,12 @@ def sync_steps():
     mode = data.get('mode', 'walking')
     event_id = data.get('event_id')
 
+    if not event_id or not isinstance(event_id, str) or not event_id.strip():
+        return jsonify({"error": "event_id is required"}), 400
     if not isinstance(step_delta, int) or isinstance(step_delta, bool) or step_delta <= 0:
         return jsonify({"error": "delta must be a positive integer"}), 400
     if mode not in ('walking', 'treadmill'):
         return jsonify({"error": "mode must be walking or treadmill"}), 400
-    if event_id is not None and (
-        not isinstance(event_id, str) or not event_id.strip()
-    ):
-        return jsonify({"error": "event_id must be a non-empty string"}), 400
     
     user_id = session['user_id']
     user = User.query.get(user_id)
