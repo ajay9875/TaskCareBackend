@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 import time
 import threading
+import requests
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
