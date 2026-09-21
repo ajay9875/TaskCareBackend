@@ -67,6 +67,15 @@ IST = ZoneInfo("Asia/Kolkata")
 # MODELS
 # ======================
 
+class PushToken(db.Model):
+    __tablename__ = 'push_token'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    token = db.Column(db.String(200), nullable=False, unique=True)
+    platform = db.Column(db.String(20), nullable=True)  # 'android' or 'ios'
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class User(db.Model):
     __tablename__ = 'user'
     id = db.Column(db.Integer, primary_key=True)
@@ -422,6 +431,43 @@ def update_target():
     user.target_steps = new_target
     db.session.commit()
     return jsonify({"status": "success", "message": "Target updated"}), 200
+
+# ======================
+# PUSH NOTIFICATION REGISTRATION
+# ======================
+@app.route('/api/push-token', methods=['POST'])
+def register_push_token():
+    if 'user_id' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    token = data.get('token', '').strip()
+    platform = data.get('platform', 'android')
+
+    if not token:
+        return jsonify({"status": "error", "message": "Token is required"}), 400
+
+    if len(token) > 200:
+        return jsonify({"status": "error", "message": "Token too long"}), 400
+
+    try:
+        existing = PushToken.query.filter_by(token=token).first()
+        if existing:
+            # Token may have moved to a different user after a re-install
+            existing.user_id = session['user_id']
+            existing.platform = platform
+        else:
+            db.session.add(PushToken(
+                user_id=session['user_id'],
+                token=token,
+                platform=platform,
+            ))
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Token registered"}), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Push token registration failed: {e}")
+        return jsonify({"status": "error", "message": "Registration failed"}), 500
 
 # Open app using web route for email app
 @app.route('/contact-support')
@@ -1204,6 +1250,154 @@ def send_daily_email():
             return jsonify({"status": "info", "message": "No emails sent. Check server terminal console logs."}), 200
     except Exception as err:
         return jsonify({"status": "error", "message": f"Direct execution crash: {str(err)}"}), 500
+
+# ======================
+# PUSH NOTIFICATION SENDER
+# ======================
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+def send_expo_push(tokens, title, body, data_payload=None):
+    """
+    Send a push notification to one or more Expo push tokens.
+    Returns True if the request was accepted by Expo.
+    """
+    if not tokens:
+        return False
+
+    if isinstance(tokens, str):
+        tokens = [tokens]
+
+    messages = []
+    for t in tokens:
+        if not t or not t.startswith("ExponentPushToken"):
+            continue
+        messages.append({
+            "to": t,
+            "sound": "default",
+            "title": title,
+            "body": body,
+            "data": data_payload or {"screen": "steps"},
+            "priority": "high",
+            "channelId": "default",
+        })
+
+    if not messages:
+        return False
+
+    try:
+        r = requests.post(
+            EXPO_PUSH_URL,
+            json=messages,
+            headers={
+                "Accept": "application/json",
+                "Accept-encoding": "gzip, deflate",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+        if r.status_code == 200:
+            print(f"✅ Push sent to {len(messages)} device(s)")
+            return True
+        print(f"❌ Expo push error {r.status_code}: {r.text}")
+        return False
+    except Exception as e:
+        print(f"❌ Push send exception: {e}")
+        return False
+
+
+def build_step_message(current, target):
+    """Build a friendly, encouraging message from the user's progress."""
+    remaining = max(0, target - current)
+    percent = int((current / target) * 100) if target > 0 else 0
+
+    if current == 0:
+        return (
+            "🚶 Start moving!",
+            f"0 / {target:,} steps today. Every step counts.",
+        )
+    if current < target * 0.25:
+        return (
+            f"🚶 {percent}% of your goal",
+            f"{current:,} steps done. Only {remaining:,} to go!",
+        )
+    if current < target * 0.5:
+        return (
+            f"🏃 {percent}% of your goal",
+            f"{remaining:,} steps left. Halfway there soon!",
+        )
+    if current < target * 0.75:
+        return (
+            f"🔥 {percent}% of your goal",
+            f"{remaining:,} steps left. You're crushing it!",
+        )
+    if current < target:
+        return (
+            f"💪 Almost there — {percent}%",
+            f"Only {remaining:,} steps to hit {target:,}. Finish strong!",
+        )
+    return (
+        "🎉 Goal smashed!",
+        f"You hit {target:,} steps today. Amazing work!",
+    )
+
+# ======================
+# 2-HOUR PUSH SCHEDULER
+# ======================
+def send_periodic_step_pushes():
+    """
+    Send a live step reminder push to every user who:
+      - has registered a push token
+      - is currently inside the 6 AM – 10 PM window (in IST)
+    Called by the PythonAnywhere scheduler every 2 hours.
+    """
+    with app.app_context():
+        now_ist = datetime.now(IST)
+
+        # Only run between 6 AM and 10 PM (inclusive of 10 PM hour start)
+        if not (6 <= now_ist.hour < 22):
+            print(f"⏸ Outside active window (hour={now_ist.hour}). No pushes sent.")
+            return 0
+
+        today = now_ist.date()
+        sent_count = 0
+
+        users = User.query.all()
+        for user in users:
+            token_row = PushToken.query.filter_by(user_id=user.id).first()
+            if not token_row:
+                continue
+
+            log = StepLog.query.filter_by(user_id=user.id, date=today).first()
+            current = 0
+            if log:
+                current = (log.walking_steps or 0) + (log.treadmill_steps or 0)
+
+            target = user.target_steps or 5000
+            title, body = build_step_message(current, target)
+
+            ok = send_expo_push(token_row.token, title, body, {"screen": "steps"})
+            if ok:
+                sent_count += 1
+
+        print(f"📲 Sent {sent_count} step reminders at {now_ist.strftime('%Y-%m-%d %H:%M')}")
+        return sent_count
+
+@app.route('/api/send-step-push')
+def send_step_push_now():
+    """
+    Trigger the periodic step push immediately for testing.
+    Visit https://TaskCare360.pythonanywhere.com/api/send-step-push
+    """
+    print("🚀 Manual trigger: sending step pushes...")
+    try:
+        sent = send_periodic_step_pushes()
+        return jsonify({
+            "status": "success",
+            "message": f"Sent {sent} push notification(s).",
+        }), 200
+    except Exception as e:
+        print(f"❌ Manual push trigger failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 def initialize_database():
     with app.app_context():
