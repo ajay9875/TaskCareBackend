@@ -1307,38 +1307,66 @@ def send_expo_push(tokens, title, body, data_payload=None):
 
 
 def build_step_message(current, target):
-    """Build a friendly, encouraging message from the user's progress."""
-    remaining = max(0, target - current)
-    percent = int((current / target) * 100) if target > 0 else 0
+    """Build a clear, professional, and consistent progress message."""
+    if target <= 0:
+        return ("🎯 Daily Step Target", "Target step goal is not set.")
 
-    if current == 0:
+    remaining = max(0, target - current)
+    percent = min(100, int((current / target) * 100))
+
+    # ✅ Generate a clean visual progress bar (10 blocks)
+    filled_blocks = int(percent / 10)
+    bar = "▰" * filled_blocks + "▱" * (10 - filled_blocks)
+    progress_line = f"[{bar}] {percent}%"
+
+    # 1. Starting / Zero steps
+    if current == 0 or percent < 1:
         return (
-            "🚶 Start moving!",
-            f"0 / {target:,} steps today. Every step counts.",
+            "📍 Ready to begin",
+            f"{progress_line}\n"
+            f"Lace up and take your first steps toward a {target:,} target!"
         )
-    if current < target * 0.25:
+
+    # 2. Early Progress (1% - 24%)
+    if percent < 25:
         return (
-            f"🚶 {percent}% of your goal",
-            f"{current:,} steps done. Only {remaining:,} to go!",
+            f"🌿 Great start",
+            f"{progress_line}\n"
+            f"You've logged {current:,} steps. Only {remaining:,} more to reach your {target:,} target."
         )
-    if current < target * 0.5:
+
+    # 3. Quarter Mark (25% - 49%)
+    if percent < 50:
         return (
-            f"🏃 {percent}% of your goal",
-            f"{remaining:,} steps left. Halfway there soon!",
+            f"⛅ Keep pushing",
+            f"{progress_line}\n"
+            f"{current:,} steps behind you. {remaining:,} steps left to hit the {target:,} target."
         )
-    if current < target * 0.75:
+
+    # 4. Halfway Mark (50% - 74%)
+    if percent < 75:
         return (
-            f"🔥 {percent}% of your goal",
-            f"{remaining:,} steps left. You're crushing it!",
+            f"🔆 Halfway there",
+            f"{progress_line}\n"
+            f"You're at {current:,} steps. Push through the final {remaining:,} to reach {target:,}."
         )
-    if current < target:
+
+    # 5. Almost There (75% - 99%)
+    if percent < 100:
         return (
-            f"💪 Almost there — {percent}%",
-            f"Only {remaining:,} steps to hit {target:,}. Finish strong!",
+            f"🚀 Almost finished",
+            f"{progress_line}\n"
+            f"{current:,} steps done. Just {remaining:,} steps left to secure your {target:,} target!"
         )
+
+    # 6. Goal Achieved / Exceeded (100%+)
+    extra = current - target
+    exceeded_text = f" (+{extra:,} extra)" if extra > 0 else ""
+    
     return (
-        "🎉 Goal smashed!",
-        f"You hit {target:,} steps today. Amazing work!",
+        "👑 Goal achieved!",
+        f"{progress_line}\n"
+        f"Target secured! You hit {current:,} steps today{exceeded_text}, conquering your {target:,} target."
     )
 
 # ======================
