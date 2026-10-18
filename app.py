@@ -1386,7 +1386,7 @@ def send_periodic_step_pushes():
          #Only run between 6 AM and 10 PM (inclusive of 10 PM hour start)
         if not (6 <= now_ist.hour < 23):
             print(f"⏸ Outside active window (hour={now_ist.hour}). No pushes sent.")
-            return "Message:⏸ Outside active window. Only allowed to send between 6 AM and 10 PM IST."
+            return "Message: Outside active window. Only allowed to send between 6 AM and 10 PM IST."
 
         today = now_ist.date()
         sent_count = 0
@@ -1410,7 +1410,7 @@ def send_periodic_step_pushes():
                 sent_count += 1
 
         print(f"📲 Sent {sent_count} step reminders at {now_ist.strftime('%Y-%m-%d %H:%M')}")
-        return f"📲 Sent {sent_count} step reminders at {now_ist.strftime('%Y-%m-%d %H:%M')}"
+        return f"Sent {sent_count} step reminders at {now_ist.strftime('%Y-%m-%d %H:%M')}"
 
 @app.route('/api/send-step-push/<secret>')
 def send_step_push_now(secret):
