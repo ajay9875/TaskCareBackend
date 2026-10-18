@@ -22,7 +22,7 @@ from email.message import EmailMessage
 from flask_migrate import Migrate  # 🚀 Import Flask-Migrate
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
-load_dotenv()      
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -32,6 +32,7 @@ CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": "*"}})
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SCHEDULER_SECRET'] = os.getenv('SCHEDULER_SECRET')
 
 # ✅ FIX: Prevents "Lost connection to MySQL server" crashes on the main app and background threads
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
@@ -40,7 +41,7 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 
 """
-# At development 
+# At development
 app.config.update(
     SESSION_COOKIE_SECURE=False,    # Only send cookies over HTTPS
     SESSION_COOKIE_HTTPONLY=True,  # Prevent JavaScript from stealing cookies
@@ -86,9 +87,9 @@ class User(db.Model):
     todos = db.relationship('Todo', backref='user', lazy=True)
     otp = db.Column(db.String(6), nullable=True)
     otp_expiry = db.Column(db.DateTime, nullable=True)
-    
+
     # Fitness Data
-    target_steps = db.Column(db.Integer, default=5000) 
+    target_steps = db.Column(db.Integer, default=5000)
     step_logs = db.relationship('StepLog', backref='user', lazy=True)
 
 class Todo(db.Model):
@@ -120,7 +121,7 @@ class StepLog(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     date = db.Column(db.Date, nullable=False)
     target_steps = db.Column(db.Integer, default=5000)
-    
+
     # 🌟 NEW SEPARATED STEP BUCKETS
     walking_steps = db.Column(db.Integer, default=0)
     treadmill_steps = db.Column(db.Integer, default=0)
@@ -141,11 +142,11 @@ class StepSyncEvent(db.Model):
 def get_steps_data():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     user = User.query.get(session['user_id'])
     today = datetime.now(IST).date()
     log = StepLog.query.filter_by(user_id=user.id, date=today).first()
-    
+
     return jsonify({
         "status": "success",
         "target_steps": user.target_steps, # Pulls your current live target setting
@@ -158,18 +159,18 @@ def get_steps_data():
 def get_steps_data():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     user = User.query.get(session['user_id'])
     today = datetime.now(IST).date()
     log = StepLog.query.filter_by(user_id=user.id, date=today).first()
-    
+
     # Extract values safely or default to 0
     w_steps = log.walking_steps if log else 0
     t_steps = log.treadmill_steps if log else 0
-    
+
     # Read what active view mode the user is toggled into from front-end query param
     mode = request.args.get('mode', 'walking')
-    
+
     if mode == 'treadmill':
         display_steps = t_steps
         distance_km = t_steps * 0.000762
@@ -200,18 +201,18 @@ def sync_steps():
 
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     data = request.get_json()
     new_steps = data.get('steps', 0)
     new_distance = data.get('distance', 0.0)
-    is_absolute = data.get('is_absolute', True) 
-    
+    is_absolute = data.get('is_absolute', True)
+
     user = User.query.get(user_id)
 
     # 1. Get the exact current time in IST
     now_ist = datetime.now(IST)
     today = now_ist.date()
-    
+
     # 🛡️ GHOST JUMP PROTECTION BLOCK
     if now_ist.hour == 0 and now_ist.minute < 15:
         today_log = StepLog.query.filter_by(user_id=user_id, date=today).first()
@@ -221,33 +222,33 @@ def sync_steps():
 
     # Fetch the row based on our corrected target date variable
     log = StepLog.query.filter_by(user_id=user_id, date=today).first()
-    
+
     if log:
         if is_absolute:
-            log.steps = new_steps 
+            log.steps = new_steps
             log.distance_km = new_distance
         else:
-            log.steps += new_steps 
+            log.steps += new_steps
             log.distance_km += new_distance
-            
+
         log.target_steps = user.target_steps
     else:
         log = StepLog(
-            user_id=user_id, 
-            steps=new_steps, 
-            distance_km=new_distance, 
+            user_id=user_id,
+            steps=new_steps,
+            distance_km=new_distance,
             date=today,
-            target_steps=user.target_steps 
+            target_steps=user.target_steps
         )
         db.session.add(log)
-    
+
     # --- 🔄 FIXED 15-DAY ROLLING CLEANUP ---
-    # Since we generate exactly the last 15 calendar days, we clean anything 
+    # Since we generate exactly the last 15 calendar days, we clean anything
     # strictly older than 15 days back from literal today.
     cleanup_today = now_ist.date()
     cutoff_date = cleanup_today - timedelta(days=15)
     StepLog.query.filter(
-        StepLog.user_id == user_id, 
+        StepLog.user_id == user_id,
         StepLog.date < cutoff_date
     ).delete()
 
@@ -260,7 +261,7 @@ def sync_steps():
 def sync_steps():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     data = request.get_json(silent=True) or {}
     step_delta = data.get('delta', data.get('steps', 0))
     mode = data.get('mode', 'walking')
@@ -272,7 +273,7 @@ def sync_steps():
         return jsonify({"error": "delta must be a positive integer"}), 400
     if mode not in ('walking', 'treadmill'):
         return jsonify({"error": "mode must be walking or treadmill"}), 400
-    
+
     user_id = session['user_id']
     user = User.query.get(user_id)
     if user is None:
@@ -297,7 +298,7 @@ def sync_steps():
         }), 200
     now_ist = datetime.now(IST)
     today = now_ist.date()
-    
+
     # Ghost jump midnight layout wrapper check
     if now_ist.hour == 0 and now_ist.minute < 15:
         today_log = StepLog.query.filter_by(user_id=user_id, date=today).first()
@@ -305,7 +306,7 @@ def sync_steps():
             today = today - timedelta(days=1)
 
     log = StepLog.query.filter_by(user_id=user_id, date=today).first()
-    
+
     if log:
         if mode == 'treadmill':
             log.treadmill_steps = (log.treadmill_steps or 0) + step_delta
@@ -327,15 +328,15 @@ def sync_steps():
 
     if event_id:
         db.session.add(StepSyncEvent(event_id=event_id, user_id=user_id))
-    
+
     # 15-Day rolling cleanup loop execution
     cutoff_date = now_ist.date() - timedelta(days=15)
     StepLog.query.filter(StepLog.user_id == user_id, StepLog.date < cutoff_date).delete()
-    
+
     db.session.commit()
     return jsonify({
-        "status": "success", 
-        "walking_steps": log.walking_steps, 
+        "status": "success",
+        "walking_steps": log.walking_steps,
         "treadmill_steps": log.treadmill_steps
     }), 200
 
@@ -344,21 +345,21 @@ def sync_steps():
 def get_performance():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     user = User.query.get(session['user_id'])
     today = datetime.now(IST).date()
-    
+
     # 1. Fetch whatever logs exist for this user
     existing_logs = StepLog.query.filter_by(user_id=user.id).all()
     # Create a fast lookup dictionary mapping {date: log_object}
     logs_dict = {l.date: l for l in existing_logs}
-    
+
     history_data = []
-    
+
     # 2. Loop EXACTLY 15 times, calculating dates from 14 days ago up to today
     for i in range(14, -1, -1):
         target_date = today - timedelta(days=i)
-        
+
         # Check if we have this date in our database lookup dictionary
         if target_date in logs_dict:
             db_row = logs_dict[target_date]
@@ -369,13 +370,13 @@ def get_performance():
             # 💡 Injection point: Day missing from DB! Generate a clean 0 step entry placeholder
             steps = 0
             current_target = user.target_steps if target_date == today else 1000  # Fallback goal
-            
+
         history_data.append({
-            "date": target_date.strftime('%d %b'), 
+            "date": target_date.strftime('%d %b'),
             "steps": steps,
             "target_steps": current_target if current_target else 5000
         })
-        
+
     return jsonify({
         "status": "success",
         "history": history_data
@@ -388,12 +389,12 @@ def get_performance():
 def get_performance():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     user = User.query.get(session['user_id'])
     today = datetime.now(IST).date()
     existing_logs = StepLog.query.filter_by(user_id=user.id).all()
     logs_dict = {l.date: l for l in existing_logs}
-    
+
     history_data = []
     for i in range(30, -1, -1):
         target_date = today - timedelta(days=i)
@@ -408,15 +409,15 @@ def get_performance():
             t_steps = 0
             total_steps = 0
             current_target = user.target_steps if target_date == today else 5000
-            
+
         history_data.append({
-            "date": target_date.strftime('%d %b'), 
+            "date": target_date.strftime('%d %b'),
             "steps": total_steps,
             "walking_steps": w_steps,      # ✅ FIXED: Now passed cleanly to support left column layout
             "treadmill_steps": t_steps,    # ✅ FIXED: Now passed cleanly to support right column layout
             "target_steps": current_target
         })
-        
+
     return jsonify({"status": "success", "history": history_data}), 200
 
 # Update target steps by user (This allows users to set their own goals from the mobile app)
@@ -424,10 +425,10 @@ def get_performance():
 def update_target():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     data = request.get_json()
     new_target = data.get('target', 5000)
-    
+
     user = User.query.get(session['user_id'])
     user.target_steps = new_target
     db.session.commit()
@@ -517,50 +518,50 @@ ROLE_EMAILS = {
 def validate_email_address(email, check_disposable=True, check_role=True):
     """
     Clean email validation checking syntax, account roles, disposable domains, and DNS/MX deliverability.
-    
+
     Returns:
         tuple: (is_valid, message, normalized_email)
     """
     if not email:
         return False, "Email is required", None
-    
+
     # Clean and lower case
     email = email.strip().lower()
-    
+
     # 1. BASIC FORMAT VALIDATION
     email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     if not re.match(email_pattern, email):
         return False, "Invalid email format. Please enter a valid email address.", None
-    
+
     # Extract local part and domain
     try:
         local_part, domain = email.split('@')
     except ValueError:
         return False, "Invalid email format", None
-    
+
     # 2. LENGTH CHECKS
     if len(local_part) > 64:
         return False, "Email local part is too long (max 64 characters)", None
-    
+
     if len(domain) > 255:
         return False, "Email domain is too long (max 255 characters)", None
-    
+
     # 3. CHECK ROLE-BASED EMAILS
     if check_role and local_part in ROLE_EMAILS:
         return False, "Please use a personal email address instead of a role-based one (admin@, info@, etc.)", None
-    
+
     # 4. CHECK DISPOSABLE EMAILS
     if check_disposable and domain in DISPOSABLE_DOMAINS:
         return False, "Disposable/temporary email addresses are not allowed. Please use a permanent email.", None
-    
+
     # 5. COMPREHENSIVE EMAIL-VALIDATOR CHECK (Handles MX and deliverability checks internally)
     try:
         valid = validate_email(email, check_deliverability=True)
         return True, "Email is valid", valid.normalized
-        
+
     except EmailNotValidError as e:
         error_msg = str(e)
-        
+
         # User-friendly error messages
         if "domain does not exist" in error_msg.lower() or "no mx record" in error_msg.lower():
             return False, f"The domain '{domain}' does not exist or cannot receive emails. Please check for typos.", None
@@ -570,7 +571,7 @@ def validate_email_address(email, check_disposable=True, check_role=True):
             return False, "This email address does not appear to be valid.", None
         else:
             return False, f"Invalid email: {error_msg}", None
-            
+
     except Exception as e:
         return False, f"Email validation failed: {str(e)}", None
 
@@ -592,10 +593,10 @@ def signup():
 
     if len(name) < 2:
         return jsonify({"status": "error", "message": "Name must be at least 2 characters long"}), 400
-    
+
     if not email:
         return jsonify({"status": "error", "message": "Email is required"}), 400
-    
+
     if not confirm_email:
         return jsonify({"status": "error", "message": "Please confirm your email"}), 400
 
@@ -608,7 +609,7 @@ def signup():
 
     if len(password) < 8:
         return jsonify({"status": "error", "message": "Password must be at least 8 characters long"}), 400
-    
+
     common_passwords = {'password', '12345678', 'qwerty123', 'admin123', 'password123'}
     if password in common_passwords:
         return jsonify({"status": "error", "message": "Password is too common. Please choose a stronger password"}), 400
@@ -627,7 +628,7 @@ def signup():
     # 4. Check if user exists
     if User.query.filter_by(email=email).first():
         return jsonify({
-            "status": "error", 
+            "status": "error",
             "message": "This email is already registered. Please login or use a different email.",
             "code": "EMAIL_EXISTS"
         }), 400
@@ -641,9 +642,9 @@ def signup():
         )
         db.session.add(new_user)
         db.session.commit()
-        
+
         return jsonify({
-            "status": "success", 
+            "status": "success",
             "message": "Account created successfully! Please login.",
             "user": {
                 "id": new_user.id,
@@ -651,12 +652,12 @@ def signup():
                 "email": new_user.email
             }
         }), 201
-        
+
     except Exception as e:
         db.session.rollback()
         print(f"❌ Database error during signup: {str(e)}")
         return jsonify({
-            "status": "error", 
+            "status": "error",
             "message": "An error occurred during registration. Please try again.",
             "code": "DATABASE_ERROR"
         }), 500
@@ -695,10 +696,10 @@ def get_dashboard_data():
         "status": "success",
         "username": session.get('username'),
         "tasks": [{"SNo": t.SNo,
-        "title": t.title, 
+        "title": t.title,
         "desc": t.desc,
-        "is_completed": t.is_completed, # ✅ FIXED: Sent boolean mapping to mobile 
-        "date_created": t.date_created.isoformat(), 
+        "is_completed": t.is_completed, # ✅ FIXED: Sent boolean mapping to mobile
+        "date_created": t.date_created.isoformat(),
         "date_updated": t.date_updated.isoformat() if t.date_updated else None} for t in all_tasks]
     }), 200
 
@@ -805,7 +806,7 @@ def add_todo():
         return jsonify({"status": "error", "message": "Title is required!"}), 400
     if not desc:
         return jsonify({"status": "error", "message": "Description is required!"}), 400
-    
+
     try:
         new_todo = Todo(
             title=title,  # FIXED: Use the 'title' variable you just stripped
@@ -819,7 +820,7 @@ def add_todo():
     except Exception as e:
         db.session.rollback() # Important for keeping the DB healthy
         return jsonify({"status": "error", "message": str(e)}), 500
-    
+
 # 🔥 NEW SEPARATE API ROUTE FOR TOGGLING STATE ONLY
 @app.route('/api/tasks/toggle/<int:SNo>', methods=['POST'])
 def api_toggle_task_complete(SNo):
@@ -837,8 +838,8 @@ def api_toggle_task_complete(SNo):
 
         db.session.commit()
         return jsonify({
-            "status": "success", 
-            "message": "Status updated successfully", 
+            "status": "success",
+            "message": "Status updated successfully",
             "is_completed": todo.is_completed
         }), 200
 
@@ -894,7 +895,7 @@ def api_forgot_password():
 
     # ✅ Use the same validation
     is_valid, error_msg, corrected_email = validate_email_address(email)
-    
+
     if not is_valid:
         return jsonify({"status": "error", "message": error_msg}), 400
 
@@ -902,7 +903,7 @@ def api_forgot_password():
         email = corrected_email
 
     user = User.query.filter_by(email=email).first()
-    
+
     if not user:
         # Don't reveal if email exists or not (security)
         return jsonify({"status": "success", "message": "If the email exists, an OTP has been sent"}), 200
@@ -913,7 +914,7 @@ def api_forgot_password():
         user.otp_expiry = datetime.now() + timedelta(minutes=5)
         db.session.commit()
         return jsonify({"status": "success", "message": "OTP sent successfully"}), 200
-    
+
     return jsonify({"status": "error", "message": "Failed to send OTP"}), 500
 
 # 2. Verify OTP (As you wrote it, it's perfect once the DB is populated)
@@ -1023,7 +1024,7 @@ def send_daily_task_reminders():
                 try:
                     # --- GET TODAY'S DATE PROPERLY ---
                     today = datetime.now(IST).date()
-                    
+
                     # Query StepLog for today
                     today_stats = StepLog.query.filter_by(
                         user_id=user.id,
@@ -1033,7 +1034,7 @@ def send_daily_task_reminders():
                     # 🏃‍♂️ Extract separated tracking data variables securely
                     walk_steps = today_stats.walking_steps if today_stats else 0
                     tread_steps = today_stats.treadmill_steps if today_stats else 0
-                    
+
                     # Pull tasks early to determine if we should skip the email entirely
                     tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
 
@@ -1072,31 +1073,31 @@ def send_daily_task_reminders():
                                         </div>
                                         <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); min-height: 150px;">
                                             <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_steps:,}</div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>                                        
+                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>
                                             <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>             
+                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>
                                             <div style="font-size: 19px; font-weight: bold; color: #ff6b35; margin-top: 2px;">{walk_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
                                             <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
                                         </div>
                                     </td>
-                                    <td style="width: 4%;"></td>                                              
+                                    <td style="width: 4%;"></td>
                                     <td style="width: 48%; vertical-align: top;">
                                         <div style="margin-bottom: 12px; padding-left: 4px;">
                                             <span style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 0.8px;">⚡ TREADMILL</span>
                                         </div>
                                         <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); min-height: 150px;">
                                             <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_steps:,}</div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>                                      
+                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>
                                             <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>             
+                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>
                                             <div style="font-size: 19px; font-weight: bold; color: #ff6b35; margin-top: 2px;">{tread_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
                                             <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
                                         </div>
                                     </td>
                                 </tr>
                             </table>
-                            <div style="height: 1.5px; background-color: rgba(255, 255, 255, 0.15); margin: 24px 0 16px 0;"></div>                       
-                            <h4 style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 1.2px; margin: 0 0 16px 0; text-align: left;">COMBINED PERFORMANCE</h4>                        
+                            <div style="height: 1.5px; background-color: rgba(255, 255, 255, 0.15); margin: 24px 0 16px 0;"></div>
+                            <h4 style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 1.2px; margin: 0 0 16px 0; text-align: left;">COMBINED PERFORMANCE</h4>
                             <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
                                 <tr>
                                     <td style="width: 55%; vertical-align: middle;">
@@ -1120,12 +1121,12 @@ def send_daily_task_reminders():
                                                 </td>
                                             </tr>
                                         </table>
-                                    </td> 
+                                    </td>
                                     <td style="width: 45%; vertical-align: middle; text-align: center; padding-left: 12px;">
                                         <div style="display: inline-block; padding: 12px 20px; background-color: rgba(255, 255, 255, 0.05); border-radius: 30px; border: 2px solid #4ecca3; margin-bottom: 12px;">
                                             <strong style="color: #ffffff; font-size: 18px; font-weight: 800;">{progress_percent}%</strong>
-                                        </div>          
-                                        <div style="width: 70%; height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 0 auto 12px auto;"></div>                   
+                                        </div>
+                                        <div style="width: 70%; height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 0 auto 12px auto;"></div>
                                         <div style="text-align: center;">
                                             <div style="color: #ffffff; font-size: 18px; font-weight: 700; margin-bottom: 4px; line-height: 20px;">
                                                 {combined_km:.2f} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">KM</span>
@@ -1139,7 +1140,7 @@ def send_daily_task_reminders():
                             </table>
                             <div style="background-color: rgba(255, 255, 255, 0.1); border-radius: 10px; height: 8px; overflow: hidden; margin: 24px 0 14px 0;">
                                 <div style="background-color: #4ecca3; width: {progress_percent}%; height: 8px; border-radius: 10px;"></div>
-                            </div>               
+                            </div>
                             <div style="text-align: center; margin-top: 28px;">
                                 <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 14px 36px; text-decoration: none; border-radius: 12px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(78, 204, 163, 0.3); letter-spacing: 0.3px;">
                                     Open TaskCare 360
@@ -1237,7 +1238,7 @@ def send_daily_task_reminders():
     except Exception as e:
         print(f"❌ Fatal error in send_daily_task_reminders: {str(e)}")
         return False
-    
+
 # 🧪 TEMPORARY TEST ROUTE: Trigger emails instantly via browser
 @app.route('/api/send-daily-email')
 def send_daily_email():
@@ -1362,7 +1363,7 @@ def build_step_message(current, target):
     # 6. Goal Achieved / Exceeded (100%+)
     extra = current - target
     exceeded_text = f" (+{extra:,} extra)" if extra > 0 else ""
-    
+
     return (
         "👑 Goal achieved!",
         f"{progress_line}\n"
@@ -1382,7 +1383,7 @@ def send_periodic_step_pushes():
     with app.app_context():
         now_ist = datetime.now(IST)
 
-        # Only run between 6 AM and 10 PM (inclusive of 10 PM hour start)
+         #Only run between 6 AM and 10 PM (inclusive of 10 PM hour start)
         if not (6 <= now_ist.hour < 22):
             print(f"⏸ Outside active window (hour={now_ist.hour}). No pushes sent.")
             return 0
@@ -1413,10 +1414,6 @@ def send_periodic_step_pushes():
 
 @app.route('/api/send-step-push/<secret>')
 def send_step_push_now(secret):
-    """
-    Trigger the periodic step push immediately for testing.
-    Requires a secret in the URL path.
-    """
     expected = app.config.get('SCHEDULER_SECRET') or ''
 
     # ✅ Safe debug logging
