@@ -3,7 +3,7 @@ import random
 import smtplib
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from flask import Flask, request, session, jsonify, redirect
+from flask import Flask, request, session, jsonify, redirect, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
