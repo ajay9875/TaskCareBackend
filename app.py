@@ -1411,12 +1411,24 @@ def send_periodic_step_pushes():
         print(f"📲 Sent {sent_count} step reminders at {now_ist.strftime('%Y-%m-%d %H:%M')}")
         return sent_count
 
-@app.route('/api/send-step-push')
-def send_step_push_now():
+@app.route('/api/send-step-push/<secret>')
+def send_step_push_now(secret):
     """
     Trigger the periodic step push immediately for testing.
-    Visit https://TaskCare360.pythonanywhere.com/api/send-step-push
+    Requires a secret in the URL path.
     """
+    expected = app.config.get('SCHEDULER_SECRET') or ''
+
+    # ✅ Safe debug logging
+    print("🔐 Auth check:")
+    print(f"   provided = '{secret[:10]}...' (len={len(secret)})")
+    print(f"   expected = '{expected[:10]}...' (len={len(expected)})")
+    print(f"   match    = {secret == expected}")
+
+    if not expected or secret != expected:
+        print(f"❌ Unauthorized attempt from {request.remote_addr}")
+        abort(403)
+
     print("🚀 Manual trigger: sending step pushes...")
     try:
         sent = send_periodic_step_pushes()
@@ -1425,6 +1437,8 @@ def send_step_push_now():
             "message": f"Sent {sent} push notification(s).",
         }), 200
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"❌ Manual push trigger failed: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
