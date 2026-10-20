@@ -1056,16 +1056,11 @@ def send_daily_task_reminders():
                     # Pull tasks early to determine if we should skip the email entirely
                     tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
 
-                    # 🛑 TOTAL EMPTY GATING ACTION:
-                    # If they have NO steps AND NO pending tasks, skip the email completely.
-                    if walk_steps == 0 and tread_steps == 0 and not tasks:
-                        print(f"⏭️  Skip email for {user.name} ({user.email}): No steps and no pending tasks.")
-                        skipped.append({
-                            "email": user.email,
-                            "name": user.name,
-                            "reason": "No steps and no pending tasks",
-                        })
-                        continue
+                    # 🛑 TOTAL EMPTY DETECTION:
+                    # If they have NO steps AND NO pending tasks, send a friendly nudge email instead of skipping.
+                    is_empty_user = (walk_steps == 0 and tread_steps == 0 and not tasks)
+                    if is_empty_user:
+                        print(f"📨 Nudge email for {user.name} ({user.email}): No steps and no pending tasks.")
 
                     # 📊 CASE 1: User HAS step data today -> Render full premium report card
                     if walk_steps > 0 or tread_steps > 0:
@@ -1171,6 +1166,35 @@ def send_daily_task_reminders():
                             </div>
                         </div>
                         """
+                    elif is_empty_user:
+                        # 👋 CASE 3: User HAS NO steps AND NO tasks -> Friendly nudge email
+                        fitness_html = f"""
+                        <div style="background-color: #16213e; padding: 28px 24px; border-radius: 22px; border: 1.5px solid rgba(255, 255, 255, 0.12); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35); color: #ffffff; text-align: center;">
+                            <div style="font-size: 42px; margin-bottom: 10px;">👋</div>
+                            <h3 style="color: #ffffff; font-size: 19px; font-weight: 800; margin: 0 0 10px 0; letter-spacing: 0.2px;">
+                                Hi {user.name}, let's get started today!
+                            </h3>
+                            <p style="color: #a4b0be; font-size: 14px; line-height: 21px; margin: 0 0 18px 0;">
+                                You haven't logged any activity or tasks yet today. Open the app to:
+                            </p>
+                            <div style="text-align: left; display: inline-block; margin: 0 auto 20px auto;">
+                                <p style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0;">
+                                    📝 <strong>Add a task</strong> to stay productive
+                                </p>
+                                <p style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0;">
+                                    🚶 <strong>Walk</strong> to save your steps
+                                </p>
+                                <p style="color: #ffffff; font-size: 14px; margin: 0;">
+                                    🎯 <strong>Hit your daily goal</strong> of {(user.target_steps if user.target_steps else 5000):,} steps
+                                </p>
+                            </div>
+                            <div style="text-align: center; margin-top: 10px;">
+                                <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 14px 36px; text-decoration: none; border-radius: 12px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(78, 204, 163, 0.3); letter-spacing: 0.3px;">
+                                    Open TaskCare 360
+                                </a>
+                            </div>
+                        </div>
+                        """
                     else:
                         # 🚫 CASE 2: User HAS NO step data today -> Render the premium dashed empty block placeholder
                         fitness_html = f"""
@@ -1190,7 +1214,10 @@ def send_daily_task_reminders():
                         """
 
                     # Tasks section rendering framework
-                    if not tasks:
+                    if is_empty_user:
+                        # Nudge emails already show the CTA card above — no separate task box needed
+                        task_content = ""
+                    elif not tasks:
                         task_content = """
                         <div style="text-align: center; padding: 20px; border: 1px dashed #ddd; border-radius: 8px; font-family: Arial, sans-serif;">
                             🎉 Great job! No pending tasks. Keep it up!
@@ -1239,8 +1266,13 @@ def send_daily_task_reminders():
                     </div>
                     """
 
+                    # Subject line varies for nudge emails
+                    if is_empty_user:
+                        subject = f"👋 Let's get started today - {today.strftime('%b %d')}"
+                    else:
+                        subject = f"📊 Daily Progress - {today.strftime('%b %d')}"
+
                     # Send email out to active user mailbox
-                    subject = f"📊 Daily Progress - {today.strftime('%b %d')}"
                     msg = MIMEMultipart("alternative")
                     msg['From'] = sender_email
                     msg['To'] = user.email
@@ -1248,8 +1280,12 @@ def send_daily_task_reminders():
                     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
                     server.send_message(msg)
-                    sent_to.append({"email": user.email, "name": user.name})
-                    print(f"✅ Email sent to {user.email}")
+                    sent_to.append({
+                        "email": user.email,
+                        "name": user.name,
+                        "type": "nudge" if is_empty_user else "report",
+                    })
+                    print(f"✅ Email sent to {user.email} ({'nudge' if is_empty_user else 'report'})")
 
                 except Exception as e:
                     print(f"❌ Failed to send to {user.email}: {str(e)}")
@@ -1279,7 +1315,7 @@ def send_daily_task_reminders():
             "skipped": skipped,
             "failed": failed,
         }
-
+    
 # 🧪 TEMPORARY TEST ROUTE: Trigger emails instantly via browser
 @app.route('/api/send-daily-email')
 def send_daily_email():
