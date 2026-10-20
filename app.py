@@ -1485,10 +1485,10 @@ def send_periodic_step_pushes():
     with app.app_context():
         now_ist = datetime.now(IST)
 
-         #Only run between 6 AM and 10 PM (inclusive of 10 PM hour start)
-        if not (6 <= now_ist.hour < 23):
+         #Only run between 4 AM and 10 PM (inclusive of 10 PM hour start)
+        if not (4 <= now_ist.hour < 22):
             print(f"⏸ Outside active window (hour={now_ist.hour}). No pushes sent.")
-            return "Message: Outside active window. Only allowed to send between 6 AM and 10 PM IST."
+            return "Message: Outside active window. Only allowed to send between 4 AM and 10 PM IST."
 
         today = now_ist.date()
         sent_count = 0
