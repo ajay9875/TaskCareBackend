@@ -1005,20 +1005,38 @@ def send_daily_task_reminders():
     sender_password = os.getenv('EMAIL_PASS')
     login_url = "https://TaskCare360.pythonanywhere.com/open-app"
 
+    # 📋 Tracking lists for the report
+    sent_to = []
+    skipped = []
+    failed = []
+
     if not sender_email or not sender_password:
         print("❌ Email credentials missing")
-        return False
+        return {
+            "error": "Email credentials missing",
+            "total_users": 0,
+            "emails_sent": 0,
+            "sent_to": sent_to,
+            "skipped": skipped,
+            "failed": failed,
+        }
 
     try:
         users = User.query.all()
         if not users:
             print("No users found")
-            return False
+            return {
+                "error": "No users found",
+                "total_users": 0,
+                "emails_sent": 0,
+                "sent_to": sent_to,
+                "skipped": skipped,
+                "failed": failed,
+            }
 
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(sender_email, sender_password)
-            emails_sent = 0
 
             for user in users:
                 try:
@@ -1041,7 +1059,12 @@ def send_daily_task_reminders():
                     # 🛑 TOTAL EMPTY GATING ACTION:
                     # If they have NO steps AND NO pending tasks, skip the email completely.
                     if walk_steps == 0 and tread_steps == 0 and not tasks:
-                        print(f"Skip email for {user.name}: No active steps and no tasks pending today.")
+                        print(f"⏭️  Skip email for {user.name} ({user.email}): No steps and no pending tasks.")
+                        skipped.append({
+                            "email": user.email,
+                            "name": user.name,
+                            "reason": "No steps and no pending tasks",
+                        })
                         continue
 
                     # 📊 CASE 1: User HAS step data today -> Render full premium report card
@@ -1225,33 +1248,76 @@ def send_daily_task_reminders():
                     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
                     server.send_message(msg)
-                    emails_sent += 1
+                    sent_to.append({"email": user.email, "name": user.name})
                     print(f"✅ Email sent to {user.email}")
 
                 except Exception as e:
                     print(f"❌ Failed to send to {user.email}: {str(e)}")
+                    failed.append({"email": user.email, "error": str(e)})
                     continue
 
-            print(f"📧 Sent {emails_sent} out of {len(users)} emails")
-            return emails_sent > 0
+            print(
+                f"📧 Done — sent: {len(sent_to)} | skipped: {len(skipped)} "
+                f"| failed: {len(failed)} | total users: {len(users)}"
+            )
+            return {
+                "error": None,
+                "total_users": len(users),
+                "emails_sent": len(sent_to),
+                "sent_to": sent_to,
+                "skipped": skipped,
+                "failed": failed,
+            }
 
     except Exception as e:
         print(f"❌ Fatal error in send_daily_task_reminders: {str(e)}")
-        return False
+        return {
+            "error": str(e),
+            "total_users": 0,
+            "emails_sent": 0,
+            "sent_to": sent_to,
+            "skipped": skipped,
+            "failed": failed,
+        }
 
 # 🧪 TEMPORARY TEST ROUTE: Trigger emails instantly via browser
 @app.route('/api/send-daily-email')
 def send_daily_email():
     print("🚀 Manual trigger: Executing email sequence...")
     try:
-        # We call the function directly inside the main web process
-        emails_sent = send_daily_task_reminders()
-        if emails_sent:
-            return jsonify({"status": "success", "message": f"Successfully sent daily digest emails!"}), 200
-        else:
-            return jsonify({"status": "info", "message": "No emails sent. Check server terminal console logs."}), 200
+        result = send_daily_task_reminders()
+
+        # If the function itself reported a hard failure (creds missing / fatal error)
+        if result.get("error"):
+            return jsonify({
+                "status": "error",
+                "message": result["error"],
+                "summary": result,
+            }), 500
+
+        # Otherwise — report full breakdown
+        return jsonify({
+            "status": "success" if result["emails_sent"] > 0 else "info",
+            "message": (
+                f"Sent {result['emails_sent']} report(s) out of "
+                f"{result['total_users']} user(s)."
+            ),
+            "summary": {
+                "total_users":  result["total_users"],
+                "emails_sent":  result["emails_sent"],
+                "skipped_count": len(result["skipped"]),
+                "failed_count":  len(result["failed"]),
+                "sent_to":       result["sent_to"],
+                "skipped":       result["skipped"],
+                "failed":        result["failed"],
+            },
+        }), 200
+
     except Exception as err:
-        return jsonify({"status": "error", "message": f"Direct execution crash: {str(err)}"}), 500
+        return jsonify({
+            "status": "error",
+            "message": f"Direct execution crash: {str(err)}",
+        }), 500
 
 # ======================
 # PUSH NOTIFICATION SENDER
