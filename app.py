@@ -453,17 +453,18 @@ def register_push_token():
         return jsonify({"status": "error", "message": "Token too long"}), 400
 
     try:
-        existing = PushToken.query.filter_by(token=token).first()
-        if existing:
-            # Token may have moved to a different user after a re-install
-            existing.user_id = session['user_id']
-            existing.platform = platform
-        else:
-            db.session.add(PushToken(
-                user_id=session['user_id'],
-                token=token,
-                platform=platform,
-            ))
+        user_id = session['user_id']
+        
+        # ✅ FIX: Delete ALL old tokens for this user before adding the new one
+        PushToken.query.filter_by(user_id=user_id).delete()
+        
+        # Add the brand new token
+        db.session.add(PushToken(
+            user_id=user_id,
+            token=token,
+            platform=platform,
+        ))
+        
         db.session.commit()
         return jsonify({"status": "success", "message": "Token registered"}), 200
     except Exception as e:
