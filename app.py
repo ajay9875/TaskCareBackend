@@ -1475,28 +1475,27 @@ def build_step_message(current, target):
 # ======================
 # 2-HOUR PUSH SCHEDULER
 # ======================
+import time # Make sure to add this at the top of your file if it's not there
+
 def send_periodic_step_pushes():
-    """
-    Send a live step reminder push to every user who:
-      - has registered a push token
-      - is currently inside the 6 AM – 10 PM window (in IST)
-    Called by the PythonAnywhere scheduler every 2 hours.
-    """
     with app.app_context():
+        start_time = time.time() # ⏱️ Start the timer
         now_ist = datetime.now(IST)
 
-         #Only run between 4 AM and 10 PM (inclusive of 10 PM hour start)
+        # Only run between 4 AM and 10 PM
         if not (4 <= now_ist.hour <= 22):
             print(f"⏸ Outside active window (hour={now_ist.hour}). No pushes sent.")
-            return "Message: Outside active window. Only allowed to send between 4 AM and 10 PM IST."
+            return "Message: Outside active window."
 
         today = now_ist.date()
         sent_count = 0
+        all_messages = [] # Collect all messages here
+        email_mapping = {} # ✅ Track which message belongs to which email
 
         users = User.query.all()
         for user in users:
             token_row = PushToken.query.filter_by(user_id=user.id).first()
-            if not token_row:
+            if not token_row or not token_row.token.startswith("ExponentPushToken"):
                 continue
 
             log = StepLog.query.filter_by(user_id=user.id, date=today).first()
@@ -1506,13 +1505,64 @@ def send_periodic_step_pushes():
 
             target = user.target_steps or 5000
             title, body = build_step_message(current, target)
+            
+            # ✅ Get user email (Assuming your User model has an 'email' column)
+            user_email = getattr(user, 'email', f"User_ID_{user.id}")
 
-            ok = send_expo_push(token_row.token, title, body, {"screen": "steps"})
-            if ok:
-                sent_count += 1
+            # ✅ Add to the list
+            all_messages.append({
+                "to": token_row.token,
+                "sound": "default",
+                "title": title,
+                "body": body,
+                "data": {"screen": "steps"},
+                "priority": "high",
+                "channelId": "default",
+            })
+            
+            # ✅ Map the token to the email so we know who succeeded
+            email_mapping[token_row.token] = user_email
 
-        print(f"📲 Sent {sent_count} step reminders at {now_ist.strftime('%Y-%m-%d %H:%M')}")
-        return f"Sent {sent_count} step reminders at {now_ist.strftime('%Y-%m-%d %H:%M')}"
+        successful_emails = [] # List to store emails of successful sends
+
+        # ✅ Now send them in batches of 100
+        if all_messages:
+            for i in range(0, len(all_messages), 100):
+                batch = all_messages[i:i + 100]
+                try:
+                    r = requests.post(
+                        EXPO_PUSH_URL,
+                        json=batch,
+                        headers={"Accept": "application/json", "Content-Type": "application/json"},
+                        timeout=10,
+                    )
+                    if r.status_code == 200:
+                        sent_count += len(batch)
+                        # ✅ If the batch succeeds, add all those emails to the success list
+                        for msg in batch:
+                            token = msg["to"]
+                            if token in email_mapping:
+                                successful_emails.append(email_mapping[token])
+                    else:
+                        print(f"❌ Expo push error {r.status_code}: {r.text}")
+                except Exception as e:
+                    print(f"❌ Push send exception: {e}")
+
+        # ⏱️ Calculate total time taken
+        end_time = time.time()
+        time_taken = round(end_time - start_time, 2)
+        
+        # ✅ Prepare the final response
+        response_message = f"Sent {sent_count} reminders at {now_ist.strftime('%Y-%m-%d %H:%M')} in {time_taken} seconds."
+        
+        if successful_emails:
+            # Join emails with commas. (If you have 100s of users, this might make the cron-job.org response very long)
+            response_message += f" | Emails: {', '.join(successful_emails)}"
+        else:
+            response_message += " | No emails sent."
+
+        print(f"📲 {response_message}")
+        return response_message
 
 @app.route('/api/send-step-push/<secret>')
 def send_step_push_now(secret):
