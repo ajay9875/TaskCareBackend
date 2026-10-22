@@ -1411,7 +1411,7 @@ def send_expo_push(tokens, title, body, data_payload=None):
 
 
 def build_step_message(current, target):
-    """Build a clear, professional, and consistent progress message."""
+    """Build a clear, professional, and highly engaging message for every 5%."""
     if target <= 0:
         return ("🎯 Daily Step Target", "Target step goal is not set.")
 
@@ -1423,6 +1423,14 @@ def build_step_message(current, target):
     bar = "▰" * filled_blocks + "▱" * (10 - filled_blocks)
     progress_line = f"[{bar}] {percent}%"
 
+    # Helper to keep format consistent
+    def format_body(action_text):
+        return (
+            f"{progress_line}\n"
+            f"{action_text} You've logged {current:,} steps. "
+            f"Only {remaining:,} left to hit your {target:,} target."
+        )
+
     # 1. Starting / Zero steps
     if current == 0 or percent < 1:
         return (
@@ -1431,39 +1439,87 @@ def build_step_message(current, target):
             f"Lace up and take your first steps toward a {target:,} target!"
         )
 
-    # 2. Early Progress (1% - 24%)
+    # 2. 1% - 4%
+    if percent < 5:
+        return ("🌿 Great start", format_body("Keep the momentum going!"))
+
+    # 3. 5% - 9%
+    if percent < 10:
+        return ("🐣 First 5% down", format_body("You're building a habit—push forward!"))
+
+    # 4. 10% - 14%
+    if percent < 15:
+        return ("🚶 Finding your stride", format_body("Maintain this steady pace!"))
+
+    # 5. 15% - 19%
+    if percent < 20:
+        return ("⚡ Picking up speed", format_body("Accelerate your efforts!"))
+
+    # 6. 20% - 24%
     if percent < 25:
-        return (
-            f"🌿 Great start",
-            f"{progress_line}\n"
-            f"You've logged {current:,} steps. Only {remaining:,} more to reach your {target:,} target."
-        )
+        return ("📈 Gaining ground", format_body("Don't stop now—keep pushing!"))
 
-    # 3. Quarter Mark (25% - 49%)
+    # 7. 25% - 29%
+    if percent < 30:
+        return ("⛅ Quarter mark", format_body("Stay focused and drive forward!"))
+
+    # 8. 30% - 34%
+    if percent < 35:
+        return ("🔥 Warming up", format_body("Your body is finding its flow!"))
+
+    # 9. 35% - 39%
+    if percent < 40:
+        return ("🏃 In the zone", format_body("Keep this incredible rhythm!"))
+
+    # 10. 40% - 44%
+    if percent < 45:
+        return ("💪 Strong progress", format_body("Power through the next stretch!"))
+
+    # 11. 45% - 49%
     if percent < 50:
-        return (
-            f"⛅ Keep pushing",
-            f"{progress_line}\n"
-            f"{current:,} steps behind you. {remaining:,} steps left to hit the {target:,} target."
-        )
+        return ("🎯 Almost halfway", format_body("Eyes on the prize—dig deep!"))
 
-    # 4. Halfway Mark (50% - 74%)
+    # 12. 50% - 54%
+    if percent < 55:
+        return ("🔆 Halfway there", format_body("You've conquered the peak—finish strong!"))
+
+    # 13. 55% - 59%
+    if percent < 60:
+        return ("🏅 Over the hump", format_body("Double down on your effort!"))
+
+    # 14. 60% - 64%
+    if percent < 65:
+        return ("👊 More than half", format_body("Build your endurance—keep moving!"))
+
+    # 15. 65% - 69%
+    if percent < 70:
+        return ("🚀 Cruising", format_body("Don't look back—drive it home!"))
+
+    # 16. 70% - 74%
     if percent < 75:
-        return (
-            f"🔆 Halfway there",
-            f"{progress_line}\n"
-            f"You're at {current:,} steps. Push through the final {remaining:,} to reach {target:,}."
-        )
+        return ("🦅 Soaring high", format_body("Make every single step count!"))
 
-    # 5. Almost There (75% - 99%)
+    # 17. 75% - 79%
+    if percent < 80:
+        return ("🌟 Home stretch", format_body("Push to your absolute limit!"))
+
+    # 18. 80% - 84%
+    if percent < 85:
+        return ("🔥 On fire", format_body("Visualize the finish line—sprint!"))
+
+    # 19. 85% - 89%
+    if percent < 90:
+        return ("🥇 Going for gold", format_body("Give it everything you've got!"))
+
+    # 20. 90% - 94%
+    if percent < 95:
+        return ("⚡ Final countdown", format_body("You're so close—empty the tank!"))
+
+    # 21. 95% - 99%
     if percent < 100:
-        return (
-            f"🚀 Almost finished",
-            f"{progress_line}\n"
-            f"{current:,} steps done. Just {remaining:,} steps left to secure your {target:,} target!"
-        )
+        return ("🏁 Finish line ahead", format_body("Leave nothing behind—secure the win!"))
 
-    # 6. Goal Achieved / Exceeded (100%+)
+    # 22. Goal Achieved / Exceeded (100%+)
     extra = current - target
     exceeded_text = f" (+{extra:,} extra)" if extra > 0 else ""
 
