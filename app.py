@@ -198,24 +198,10 @@ def get_sync_token():
 
 @app.route('/api/steps/sync/native', methods=['POST'])
 def sync_steps_native():
-    """
-    Adapter for react-native-step-tracker-pro's remoteSyncUrl.
-    Accepts:
-      - Bearer auth: Authorization: Bearer <token>
-      - Signature auth: user_id in query string, X-Signature header (we log it but don't verify yet)
-    """
-    # 🔍 DEBUG: see exactly what the native layer sent
-    print("\n=== NATIVE SYNC HIT ===")
-    print(f"  URL: {request.url}")
-    print(f"  Args: {dict(request.args)}")
-    print(f"  Headers: {dict(request.headers)}")
     body = request.get_json(silent=True) or {}
-    print(f"  Body: {body}")
-    print("=======================\n")
-
     user_id = None
 
-    # 1. Try Bearer (legacy path)
+    # 1. Try Bearer
     auth = request.headers.get('Authorization', '')
     if auth.startswith('Bearer '):
         try:
@@ -224,22 +210,19 @@ def sync_steps_native():
         except (BadSignature, KeyError, TypeError, ValueError):
             pass
 
-    # 2. Try user_id query param (signature path)
+    # 2. Try query param
     if user_id is None:
         qs_user_id = request.args.get('user_id', type=int)
         if qs_user_id and qs_user_id > 0:
             user_id = qs_user_id
 
     if not user_id:
-        print("❌ native sync: no user_id in headers or query")
         return jsonify({"error": "Unauthorized"}), 401
 
     user = User.query.get(user_id)
     if not user:
-        print(f"❌ native sync: user {user_id} not found")
         return jsonify({"error": "Unauthorized"}), 401
 
-    # Accept both 'records' (full) and legacy single-object body
     records = body.get('records', [])
     if not records and 'steps' in body:
         records = [body]
@@ -261,7 +244,6 @@ def sync_steps_native():
                 try:
                     rec_date = datetime.strptime(date_str, '%Y-%m-%d').date()
                 except ValueError:
-                    print(f"native sync: invalid date {date_str!r}, skipping")
                     continue
 
             log = StepLog.query.filter_by(user_id=user_id, date=rec_date).first()
@@ -294,7 +276,6 @@ def sync_steps_native():
     StepLog.query.filter(StepLog.user_id == user_id, StepLog.date < cutoff_date).delete()
 
     db.session.commit()
-    print(f"✅ native sync: applied {applied} steps for user {user_id}")
     return jsonify({"status": "success", "applied_steps": applied}), 200
 
 # OLD: This route allows the mobile app to sync step data for the current day. It checks if the user is authenticated, retrieves the new step count and distance from the request, and updates or creates a StepLog entry for today. It also includes a cleanup mechanism to delete logs older than 15 days.
