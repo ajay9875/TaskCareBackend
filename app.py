@@ -187,6 +187,99 @@ def get_steps_data():
         "treadmill_steps": t_steps
     }), 200
 
+@app.route('/api/sync-token', methods=['GET'])
+def get_sync_token():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({
+        "status": "success",
+        "step_sync_token": sync_token_serializer.dumps({"user_id": session['user_id']}),
+    }), 200
+
+@app.route('/api/steps/sync/native', methods=['POST'])
+def sync_steps_native():
+    """
+    Adapter for react-native-step-tracker-pro's remoteSyncUrl.
+    Receives: { source, sentAt, records: [{ date, steps, distance, calories }] }
+    """
+    # 1. Auth via header (set remoteSyncHeaders in the app)
+    auth = request.headers.get('Authorization', '')
+    if not auth.startswith('Bearer '):
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        payload = sync_token_serializer.loads(auth[7:], max_age=30 * 24 * 60 * 60)
+        user_id = int(payload['user_id'])
+    except (BadSignature, KeyError, TypeError, ValueError):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    records = data.get('records', [])
+    if not isinstance(records, list):
+        return jsonify({"error": "Invalid payload"}), 400
+
+    # Optional: idempotency check (native sends it, but you may already have accepted it)
+    idem_key = request.headers.get('Idempotency-Key')
+    # You could store idem_key in a small table and skip if seen.
+    # For now, the cumulative-total comparison below makes retries harmless.
+
+    applied = 0
+    for rec in records:
+        try:
+            date_str = rec.get('date')  # 'yyyy-MM-dd'
+            native_total = int(rec.get('steps', 0))
+            if native_total <= 0:
+                continue
+
+            # Parse date — this is the device's local date
+            date_str = rec.get('date')
+            if not date_str:
+                rec_date = datetime.now(IST).date()
+            else:
+                try:
+                    rec_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    print(f"native sync: invalid date {date_str!r}, skipping")
+                    continue
+                
+            log = StepLog.query.filter_by(user_id=user_id, date=rec_date).first()
+            existing_total = 0
+            if log:
+                existing_total = (log.walking_steps or 0) + (log.treadmill_steps or 0)
+
+            delta = native_total - existing_total
+            if delta <= 0:
+                continue  # No new steps, or duplicate
+
+            # Default to walking — native has no treadmill concept.
+            # Your JS-mode distinction still works for the foreground path.
+            if log:
+                log.walking_steps = (log.walking_steps or 0) + delta
+                log.target_steps = user.target_steps
+            else:
+                log = StepLog(
+                    user_id=user_id,
+                    walking_steps=delta,
+                    treadmill_steps=0,
+                    date=rec_date,
+                    target_steps=user.target_steps,
+                )
+                db.session.add(log)
+            applied += delta
+        except Exception as e:
+            print(f"native sync record error: {e}")
+            continue
+
+    # 15-day cleanup (same as your other endpoint)
+    cutoff_date = datetime.now(IST).date() - timedelta(days=15)
+    StepLog.query.filter(StepLog.user_id == user_id, StepLog.date < cutoff_date).delete()
+
+    db.session.commit()
+    return jsonify({"status": "success", "applied_steps": applied}), 200
+
 # OLD: This route allows the mobile app to sync step data for the current day. It checks if the user is authenticated, retrieves the new step count and distance from the request, and updates or creates a StepLog entry for today. It also includes a cleanup mechanism to delete logs older than 15 days.
 """@app.route('/api/steps/sync', methods=['POST'])
 def sync_steps():
