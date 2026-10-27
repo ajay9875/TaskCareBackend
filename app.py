@@ -100,21 +100,15 @@ class Todo(db.Model):
     date_created = db.Column(db.Date, nullable=False)
     date_updated = db.Column(db.Date, nullable=True)
     is_completed = db.Column(db.Boolean, default=False, nullable=False)
+    # ✅ NEW: Soft delete flag
+    is_deleted = db.Column(db.Boolean, default=False, nullable=False) 
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 # ======================
 # OLD STEP LOG MODEL
-"""class StepLog(db.Model):
-    __tablename__ = 'step_log'
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    steps = db.Column(db.Integer, default=0)
-    distance_km = db.Column(db.Float, default=0.0)
-    date = db.Column(db.Date, nullable=False)
-    # 🔥 Add this column to save the historical daily goal
-    target_steps = db.Column(db.Integer, default=5000)"""
+# ======================
 
-# New StepLog model with separated step buckets for walking and treadmill
+# StepLog model with separated step buckets for walking and treadmill
 class StepLog(db.Model):
     __tablename__ = 'step_log'
     id = db.Column(db.Integer, primary_key=True)
@@ -137,24 +131,8 @@ class StepSyncEvent(db.Model):
 # ======================
 # API ENDPOINTS
 # ======================
-# OLD: This route returns the current day's step data for the logged-in user, including their target steps, current steps, and distance in kilometers. It checks if the user is authenticated via session and retrieves the relevant data from the database.
-"""@app.route('/api/steps/data', methods=['GET'])
-def get_steps_data():
-    if 'user_id' not in session:
-        return jsonify({"error": "Unauthorized"}), 401
 
-    user = User.query.get(session['user_id'])
-    today = datetime.now(IST).date()
-    log = StepLog.query.filter_by(user_id=user.id, date=today).first()
-
-    return jsonify({
-        "status": "success",
-        "target_steps": user.target_steps, # Pulls your current live target setting
-        "current_steps": log.steps if log else 0,
-        "distance_km": log.distance_km if log else 0.0
-    }), 200"""
-
-# NEW: This route returns the current day's step data and allows the front-end to specify which step mode (walking or treadmill) to display.
+# This route returns the current day's step data and allows the front-end to specify which step mode (walking or treadmill) to display.
 @app.route('/api/steps/data', methods=['GET'])
 def get_steps_data():
     if 'user_id' not in session:
@@ -187,7 +165,7 @@ def get_steps_data():
         "treadmill_steps": t_steps
     }), 200
 
-@app.route('/api/sync-token', methods=['GET'])
+"""@app.route('/api/sync-token', methods=['GET'])
 def get_sync_token():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
@@ -277,74 +255,6 @@ def sync_steps_native():
 
     db.session.commit()
     return jsonify({"status": "success", "applied_steps": applied}), 200
-
-# OLD: This route allows the mobile app to sync step data for the current day. It checks if the user is authenticated, retrieves the new step count and distance from the request, and updates or creates a StepLog entry for today. It also includes a cleanup mechanism to delete logs older than 15 days.
-"""@app.route('/api/steps/sync', methods=['POST'])
-def sync_steps():
-    user_id = session.get('user_id')
-    bearer = request.headers.get('Authorization', '')
-    if not user_id and bearer.startswith('Bearer '):
-        try:
-            payload = sync_token_serializer.loads(bearer[7:], max_age=30 * 24 * 60 * 60)
-            user_id = int(payload['user_id'])
-        except (BadSignature, KeyError, TypeError, ValueError):
-            user_id = None
-
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    data = request.get_json()
-    new_steps = data.get('steps', 0)
-    new_distance = data.get('distance', 0.0)
-    is_absolute = data.get('is_absolute', True)
-
-    user = User.query.get(user_id)
-
-    # 1. Get the exact current time in IST
-    now_ist = datetime.now(IST)
-    today = now_ist.date()
-
-    # 🛡️ GHOST JUMP PROTECTION BLOCK
-    if now_ist.hour == 0 and now_ist.minute < 15:
-        today_log = StepLog.query.filter_by(user_id=user_id, date=today).first()
-        if not today_log or today_log.steps == 0:
-            today = today - timedelta(days=1)
-            print(f"🌙 Late night sync caught: Redirecting {new_steps} steps to yesterday ({today})")
-
-    # Fetch the row based on our corrected target date variable
-    log = StepLog.query.filter_by(user_id=user_id, date=today).first()
-
-    if log:
-        if is_absolute:
-            log.steps = new_steps
-            log.distance_km = new_distance
-        else:
-            log.steps += new_steps
-            log.distance_km += new_distance
-
-        log.target_steps = user.target_steps
-    else:
-        log = StepLog(
-            user_id=user_id,
-            steps=new_steps,
-            distance_km=new_distance,
-            date=today,
-            target_steps=user.target_steps
-        )
-        db.session.add(log)
-
-    # --- 🔄 FIXED 15-DAY ROLLING CLEANUP ---
-    # Since we generate exactly the last 15 calendar days, we clean anything
-    # strictly older than 15 days back from literal today.
-    cleanup_today = now_ist.date()
-    cutoff_date = cleanup_today - timedelta(days=15)
-    StepLog.query.filter(
-        StepLog.user_id == user_id,
-        StepLog.date < cutoff_date
-    ).delete()
-
-    db.session.commit()
-    return jsonify({"status": "success", "message": "Synced and history cleaned", "date_applied": str(today)}), 200
 """
 
 # NEW: This route allows the mobile app to sync step data for the current day, with separate handling for walking and treadmill steps. It checks if the user is authenticated, retrieves the step delta and mode from the request, and updates or creates a StepLog entry for today. It also includes a cleanup mechanism to delete logs older than 15 days.
@@ -419,10 +329,6 @@ def sync_steps():
 
     if event_id:
         db.session.add(StepSyncEvent(event_id=event_id, user_id=user_id))
-
-    # 15-Day rolling cleanup loop execution
-    cutoff_date = now_ist.date() - timedelta(days=15)
-    StepLog.query.filter(StepLog.user_id == user_id, StepLog.date < cutoff_date).delete()
 
     db.session.commit()
     return jsonify({
@@ -783,6 +689,8 @@ def get_dashboard_data():
     user_id = session['user_id']
     all_tasks = Todo.query.filter_by(user_id=user_id).order_by(Todo.SNo.desc()).all()
 
+    all_tasks = Todo.query.filter_by(user_id=user_id, is_deleted=False).order_by(Todo.SNo.desc()).all()
+
     # Send JSON back to the Android App
     return jsonify({
         "status": "success",
@@ -874,7 +782,8 @@ def get_tasks():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
-    todos = Todo.query.filter_by(user_id=session['user_id']).order_by(Todo.SNo.desc()).all()
+    todos = Todo.query.filter_by(user_id=session['user_id'], is_deleted=False).order_by(Todo.SNo.desc()).all()
+
     return jsonify([{
         "SNo": t.SNo, "title": t.title, "desc": t.desc,
         "date_created": t.date_created.isoformat()
@@ -946,7 +855,8 @@ def delete_todo(sno):
 
     todo = Todo.query.filter_by(SNo=sno, user_id=session['user_id']).first()
     if todo:
-        db.session.delete(todo)
+        # ✅ CHANGE: Soft delete instead of hard delete
+        todo.is_deleted = True
         db.session.commit()
         return jsonify({"status": "success", "message": "Deleted"}), 200
     return jsonify({"error": "Not found"}), 404
@@ -1090,7 +1000,8 @@ def api_update_todo(SNo):
 
 # In your Flask app, e.g. app.py
 from sqlalchemy import func
-@app.route('/api/public/stats', methods=['GET'])  # ✅ FIXED: Added /api
+
+@app.route('/api/public/stats', methods=['GET'])
 def public_stats():
     try:
         # 1. Total Users
@@ -1102,43 +1013,20 @@ def public_stats():
             func.coalesce(func.sum(StepLog.treadmill_steps), 0)
         ).scalar() or 0
 
-        # 3. Active Today (Distinct users who logged steps today)
-        today = datetime.now(IST).date()
-        active_today = db.session.query(
-            func.count(func.distinct(StepLog.user_id))
-        ).filter(StepLog.date == today).scalar() or 0
-
-        # 4. Tasks Completed
-        tasks_completed = db.session.query(Todo).filter(Todo.is_completed == True).count()
-
-        # 5. Real Sync Accuracy (Users who successfully synced in the last 24h)
-        cutoff_24h = datetime.utcnow() - timedelta(hours=24)
-        users_synced_24h = db.session.query(
-            func.count(func.distinct(StepSyncEvent.user_id))
-        ).filter(StepSyncEvent.created_at >= cutoff_24h).scalar() or 0
-
-        users_logged_24h = db.session.query(
-            func.count(func.distinct(StepLog.user_id))
-        ).filter(StepLog.date >= (today - timedelta(days=1))).scalar() or 0
-
-        if users_logged_24h > 0:
-            sync_accuracy = round((users_synced_24h / users_logged_24h) * 100, 1)
-            sync_accuracy = min(max(sync_accuracy, 0.0), 100.0)
-        else:
-            sync_accuracy = 100.0
+        # 3. Tasks Handled (Total tasks created, including deleted/completed)
+        tasks_handled = db.session.query(Todo).count()
 
         return jsonify({
             "status": "success",
             "total_users": int(total_users),
             "total_steps": int(total_steps),
-            "active_today": int(active_today),
-            "tasks_completed": int(tasks_completed),
-            "sync_accuracy": float(sync_accuracy),  # ✅ Now real data
+            "tasks_handled": int(tasks_handled),
         }), 200
 
     except Exception as e:
         print(f"❌ Public stats error: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
+
 
 # ======================
 # INITIALIZATION
@@ -1198,8 +1086,8 @@ def send_daily_task_reminders():
                     tread_steps = today_stats.treadmill_steps if today_stats else 0
 
                     # Pull tasks early to determine if we should skip the email entirely
-                    tasks = Todo.query.filter_by(user_id=user.id, is_completed=False).order_by(Todo.SNo.desc()).all()
-
+                    tasks = Todo.query.filter_by(user_id=user.id, is_completed=False, is_deleted=False).order_by(Todo.SNo.desc()).all()
+                    
                     # 🛑 TOTAL EMPTY DETECTION:
                     # If they have NO steps AND NO pending tasks, send a friendly nudge email instead of skipping.
                     is_empty_user = (walk_steps == 0 and tread_steps == 0 and not tasks)
