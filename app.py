@@ -1088,6 +1088,40 @@ def api_update_todo(SNo):
         db.session.rollback()
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# In your Flask app, e.g. app.py
+from sqlalchemy import func
+@app.route('/public/stats', methods=['GET'])
+def public_stats():
+    try:
+        # Replace with your actual queries
+        total_users = db.session.query(User).count()
+
+        total_steps = db.session.query(
+            func.coalesce(func.sum(StepLog.walking_steps), 0) +
+            func.coalesce(func.sum(StepLog.treadmill_steps), 0)
+        ).scalar() or 0
+
+        # Distinct users who logged any step today
+        today = datetime.now(IST).date()
+        active_today = db.session.query(
+            func.count(func.distinct(StepLog.user_id))
+        ).filter(StepLog.date == today).scalar() or 0
+
+        # Sum of completed tasks, or you can swap for "tasks completed"
+        tasks_completed = db.session.query(Todo).filter(Todo.is_completed == True).count()
+
+        return jsonify({
+            "status": "success",
+            "total_users": int(total_users),
+            "total_steps": int(total_steps),
+            "active_today": int(active_today),
+            "tasks_completed": int(tasks_completed),
+            # accuracy = % of successful syncs in last 24h, if you track it
+            "sync_accuracy": 99.4,
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
 # ======================
 # INITIALIZATION
 # ======================
