@@ -337,48 +337,6 @@ def sync_steps():
         "treadmill_steps": log.treadmill_steps
     }), 200
 
-# OLD:📊 UPDATED Dynamically calculates and returns exactly 15 sequential days
-"""@app.route('/api/steps/performance', methods=['GET'])
-def get_performance():
-    if 'user_id' not in session:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    user = User.query.get(session['user_id'])
-    today = datetime.now(IST).date()
-
-    # 1. Fetch whatever logs exist for this user
-    existing_logs = StepLog.query.filter_by(user_id=user.id).all()
-    # Create a fast lookup dictionary mapping {date: log_object}
-    logs_dict = {l.date: l for l in existing_logs}
-
-    history_data = []
-
-    # 2. Loop EXACTLY 15 times, calculating dates from 14 days ago up to today
-    for i in range(14, -1, -1):
-        target_date = today - timedelta(days=i)
-
-        # Check if we have this date in our database lookup dictionary
-        if target_date in logs_dict:
-            db_row = logs_dict[target_date]
-            steps = db_row.steps
-            # Use current live target if evaluating today, otherwise use saved snapshot
-            current_target = user.target_steps if target_date == today else db_row.target_steps
-        else:
-            # 💡 Injection point: Day missing from DB! Generate a clean 0 step entry placeholder
-            steps = 0
-            current_target = user.target_steps if target_date == today else 1000  # Fallback goal
-
-        history_data.append({
-            "date": target_date.strftime('%d %b'),
-            "steps": steps,
-            "target_steps": current_target if current_target else 5000
-        })
-
-    return jsonify({
-        "status": "success",
-        "history": history_data
-    }), 200
-"""
 
 # NEW:📊 UPDATED Dynamically calculates and returns exactly 15 sequential days with combined step totals
 # 📊 FIXED: Dynamically calculates and returns 30 sequential days with fully separated mode tracking data
@@ -392,26 +350,22 @@ def get_performance():
     existing_logs = StepLog.query.filter_by(user_id=user.id).all()
     logs_dict = {l.date: l for l in existing_logs}
 
+    # ✅ NEW: Fetch all distinct dates from DB, sorted descending
+    all_dates = sorted(logs_dict.keys(), reverse=True)
+    
     history_data = []
-    for i in range(30, -1, -1):
-        target_date = today - timedelta(days=i)
-        if target_date in logs_dict:
-            db_row = logs_dict[target_date]
-            w_steps = db_row.walking_steps if db_row.walking_steps is not None else 0
-            t_steps = db_row.treadmill_steps if db_row.treadmill_steps is not None else 0
-            total_steps = w_steps + t_steps
-            current_target = user.target_steps if target_date == today else (db_row.target_steps or 5000)
-        else:
-            w_steps = 0
-            t_steps = 0
-            total_steps = 0
-            current_target = user.target_steps if target_date == today else 5000
-
+    for target_date in all_dates:
+        db_row = logs_dict[target_date]
+        w_steps = db_row.walking_steps if db_row.walking_steps is not None else 0
+        t_steps = db_row.treadmill_steps if db_row.treadmill_steps is not None else 0
+        total_steps = w_steps + t_steps
+        current_target = user.target_steps if target_date == today else (db_row.target_steps or 5000)
+        
         history_data.append({
             "date": target_date.strftime('%d %b'),
             "steps": total_steps,
-            "walking_steps": w_steps,      # ✅ FIXED: Now passed cleanly to support left column layout
-            "treadmill_steps": t_steps,    # ✅ FIXED: Now passed cleanly to support right column layout
+            "walking_steps": w_steps,
+            "treadmill_steps": t_steps,
             "target_steps": current_target
         })
 
