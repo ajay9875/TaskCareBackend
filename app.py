@@ -1090,25 +1090,42 @@ def api_update_todo(SNo):
 
 # In your Flask app, e.g. app.py
 from sqlalchemy import func
-@app.route('/public/stats', methods=['GET'])
+@app.route('/api/public/stats', methods=['GET'])  # ✅ FIXED: Added /api
 def public_stats():
     try:
-        # Replace with your actual queries
+        # 1. Total Users
         total_users = db.session.query(User).count()
 
+        # 2. Total Steps (Walking + Treadmill)
         total_steps = db.session.query(
             func.coalesce(func.sum(StepLog.walking_steps), 0) +
             func.coalesce(func.sum(StepLog.treadmill_steps), 0)
         ).scalar() or 0
 
-        # Distinct users who logged any step today
+        # 3. Active Today (Distinct users who logged steps today)
         today = datetime.now(IST).date()
         active_today = db.session.query(
             func.count(func.distinct(StepLog.user_id))
         ).filter(StepLog.date == today).scalar() or 0
 
-        # Sum of completed tasks, or you can swap for "tasks completed"
+        # 4. Tasks Completed
         tasks_completed = db.session.query(Todo).filter(Todo.is_completed == True).count()
+
+        # 5. Real Sync Accuracy (Users who successfully synced in the last 24h)
+        cutoff_24h = datetime.utcnow() - timedelta(hours=24)
+        users_synced_24h = db.session.query(
+            func.count(func.distinct(StepSyncEvent.user_id))
+        ).filter(StepSyncEvent.created_at >= cutoff_24h).scalar() or 0
+
+        users_logged_24h = db.session.query(
+            func.count(func.distinct(StepLog.user_id))
+        ).filter(StepLog.date >= (today - timedelta(days=1))).scalar() or 0
+
+        if users_logged_24h > 0:
+            sync_accuracy = round((users_synced_24h / users_logged_24h) * 100, 1)
+            sync_accuracy = min(max(sync_accuracy, 0.0), 100.0)
+        else:
+            sync_accuracy = 100.0
 
         return jsonify({
             "status": "success",
@@ -1116,10 +1133,11 @@ def public_stats():
             "total_steps": int(total_steps),
             "active_today": int(active_today),
             "tasks_completed": int(tasks_completed),
-            # accuracy = % of successful syncs in last 24h, if you track it
-            "sync_accuracy": 99.4,
+            "sync_accuracy": float(sync_accuracy),  # ✅ Now real data
         }), 200
+
     except Exception as e:
+        print(f"❌ Public stats error: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 # ======================
