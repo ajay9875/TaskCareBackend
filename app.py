@@ -129,6 +129,78 @@ class StepSyncEvent(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 # ======================
+# NUMBER FORMATTING HELPERS
+# ======================
+
+def format_compact_number(n, decimals=1):
+    """
+    Abbreviate large integers for display.
+
+    Examples:
+        999            -> "999"
+        1_500          -> "1.5K"
+        32_315         -> "32.3K"
+        1_000_000      -> "1M"
+        1_100_000      -> "1.1M"
+        1_500_000_000  -> "1.5B"
+        2_000_000_000_000 -> "2T"
+
+    Returns a string. Negative numbers keep their sign.
+    """
+    try:
+        n = float(n or 0)
+    except (TypeError, ValueError):
+        return "0"
+
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+
+    for threshold, suffix in (
+        (1_000_000_000_000, "T"),
+        (1_000_000_000,     "B"),
+        (1_000_000,         "M"),
+        (1_000,             "K"),
+    ):
+        if n >= threshold:
+            value = n / threshold
+            # Trim trailing .0 so 1.0M -> "1M", but keep 1.5M
+            formatted = f"{value:.{decimals}f}".rstrip("0").rstrip(".")
+            return f"{sign}{formatted}{suffix}"
+
+    return f"{sign}{int(n)}"
+
+
+def format_metric(n, decimals=1):
+    """
+    Universal number formatter. Returns raw value, display string, and
+    comma-separated full string.
+
+    - Integers (steps, calories, counts)  → abbreviated: "32.3K", "1.5M", "2B"
+    - Floats (distances, etc.)            → preserved decimals: "11.43", "24.38"
+    """
+    try:
+        n = float(n or 0)
+    except (TypeError, ValueError):
+        n = 0.0
+
+    # Integers → use compact abbreviation
+    if n.is_integer():
+        raw = int(n)
+        return {
+            "value":   raw,
+            "display": format_compact_number(raw, decimals=decimals),
+            "full":    f"{raw:,}",
+        }
+
+    # Floats → preserve the decimals as given
+    rounded = round(n, 2)
+    return {
+        "value":   rounded,
+        "display": f"{rounded:.2f}",
+        "full":    f"{rounded:.2f}",
+    }
+
+# ======================
 # API ENDPOINTS
 # ======================
 
@@ -340,7 +412,7 @@ def sync_steps():
 
 # NEW:📊 UPDATED Dynamically calculates and returns exactly 15 sequential days with combined step totals
 # 📊 FIXED: Dynamically calculates and returns 30 sequential days with fully separated mode tracking data
-@app.route('/api/steps/performance', methods=['GET'])
+"""@app.route('/api/steps/performance', methods=['GET'])
 def get_performance():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
@@ -369,7 +441,65 @@ def get_performance():
             "target_steps": current_target
         })
 
-    return jsonify({"status": "success", "history": history_data}), 200
+    return jsonify({"status": "success", "history": history_data}), 200"""
+
+@app.route('/api/steps/performance', methods=['GET'])
+def get_performance():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    user = User.query.get(session['user_id'])
+    today = datetime.now(IST).date()
+    existing_logs = StepLog.query.filter_by(user_id=user.id).all()
+    logs_dict = {l.date: l for l in existing_logs}
+
+    all_dates = sorted(logs_dict.keys(), reverse=True)
+
+    history_data = []
+    total_walking = 0
+    total_treadmill = 0
+
+    for target_date in all_dates:
+        db_row = logs_dict[target_date]
+        w_steps = db_row.walking_steps or 0
+        t_steps = db_row.treadmill_steps or 0
+
+        total_walking += w_steps
+        total_treadmill += t_steps
+
+        total_steps = w_steps + t_steps
+        current_target = user.target_steps if target_date == today else (db_row.target_steps or 5000)
+
+        history_data.append({
+            "date": target_date.strftime('%d %b'),
+            "steps": total_steps,
+            "walking_steps": w_steps,
+            "treadmill_steps": t_steps,
+            "target_steps": current_target,
+        })
+
+    combined = total_walking + total_treadmill
+
+    # ✅ Pre-formatted lifetime summary for the History header card
+    # Replace the summary block with:
+    summary = {
+        "walking_steps":   format_metric(total_walking),
+        "treadmill_steps": format_metric(total_treadmill),
+        "walking_km":      format_metric(round(total_walking   * 0.000762, 2)),
+        "walking_cal":     format_metric(round(total_walking   * 0.04)),
+        "treadmill_km":    format_metric(round(total_treadmill * 0.000762, 2)),
+        "treadmill_cal":   format_metric(round(total_treadmill * 0.0575)),
+        "combined_steps":  format_metric(combined),
+        "combined_km":     format_metric(round(combined * 0.000762, 2)),
+        "combined_cal":    format_metric(round(total_walking * 0.04) + round(total_treadmill * 0.0575)),
+        "days_tracked":    len(all_dates),
+    }
+
+    return jsonify({
+        "status": "success",
+        "history": history_data,
+        "summary": summary,
+    }), 200
 
 # Update target steps by user (This allows users to set their own goals from the mobile app)
 @app.route('/api/steps/update-target', methods=['POST'])
@@ -955,7 +1085,7 @@ def api_update_todo(SNo):
 # In your Flask app, e.g. app.py
 from sqlalchemy import func
 
-@app.route('/api/public/stats', methods=['GET'])
+"""@app.route('/api/public/stats', methods=['GET'])
 def public_stats():
     try:
         # 1. Total Users
@@ -980,7 +1110,34 @@ def public_stats():
     except Exception as e:
         print(f"❌ Public stats error: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
+"""
 
+@app.route('/api/public/stats', methods=['GET'])
+def public_stats():
+    try:
+        total_users = db.session.query(User).count()
+        total_steps = db.session.query(
+            func.coalesce(func.sum(StepLog.walking_steps), 0) +
+            func.coalesce(func.sum(StepLog.treadmill_steps), 0)
+        ).scalar() or 0
+        tasks_handled = db.session.query(Todo).count()
+
+        return jsonify({
+            "status": "success",
+            # Raw values (unchanged — existing clients keep working)
+            "total_users": int(total_users),
+            "total_steps": int(total_steps),
+            "tasks_handled": int(tasks_handled),
+            # ✅ Pre-formatted display strings
+            "display": {
+                "total_users":   format_compact_number(total_users),
+                "total_steps":   format_compact_number(total_steps),
+                "tasks_handled": format_compact_number(tasks_handled),
+            },
+        }), 200
+    except Exception as e:
+        print(f"❌ Public stats error: {e}")
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 # ======================
 # INITIALIZATION
