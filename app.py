@@ -852,10 +852,15 @@ def update_profile():
 # ======================
 # LOGOUT API
 # ======================
-@app.route('/api/logout', methods=['GET', 'POST']) # Support both for flexibility
+
+@app.route('/api/logout', methods=['GET', 'POST'])
 def logout():
-    session.clear() # This wipes the user_id and username from the session
-    return jsonify({"status": "success", "message": "Logged out successfully"}), 200
+    session.clear() # Wipes the server-side session
+    
+    # 👇 THIS IS THE MISSING PIECE
+    response = jsonify({"status": "success", "message": "Logged out successfully"})
+    response.delete_cookie('session', path='/', domain=None) 
+    return response, 200
 
 # ======================
 # TASK API ENDPOINTS
