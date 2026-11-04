@@ -57,7 +57,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='None',
     PERMANENT_SESSION_LIFETIME=timedelta(days=210)   # ← uncomment + set to 210
 )
-
+ 
 db = SQLAlchemy(app)
 
 migrate = Migrate(app, db)  # 🚀 Initialize Migrate with your app and db
