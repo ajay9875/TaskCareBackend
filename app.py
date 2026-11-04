@@ -254,6 +254,12 @@ def sync_steps_native():
     """
     # 1. Authenticate via Authorization header
     auth = request.headers.get('Authorization', '')
+
+    print(f"🚨 NATIVE SYNC: auth_header='{auth[:30]}...' len={len(auth)}")
+
+    # ✅ ADD THIS LINE
+    print(f"🚨 RAW BODY: {request.get_data(as_text=True)}")
+    
     if not auth.startswith('Bearer '):
         return jsonify({"error": "Missing or invalid Authorization header"}), 401
 
