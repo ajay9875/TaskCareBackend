@@ -52,10 +52,10 @@ app.config.update(
 
 # At production
 app.config.update(
-    SESSION_COOKIE_SECURE=True,    # Only send cookies over HTTPS
-    SESSION_COOKIE_HTTPONLY=True,  # Prevent JavaScript from stealing cookies
-    SESSION_COOKIE_SAMESITE='None',# Required for Cross-App requests (Android to Web)
-    #PERMANENT_SESSION_LIFETIME=timedelta(days=14)
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='None',
+    PERMANENT_SESSION_LIFETIME=timedelta(days=210)   # ← uncomment + set to 210
 )
 
 db = SQLAlchemy(app)
