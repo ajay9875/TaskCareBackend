@@ -84,6 +84,7 @@ class User(db.Model):
     name = db.Column(db.String(150), nullable=False)
     email = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
+    vault_pin = db.Column(db.String(200), nullable=True) # 👈 ADD THIS
     todos = db.relationship('Todo', backref='user', lazy=True)
     otp = db.Column(db.String(6), nullable=True)
     otp_expiry = db.Column(db.DateTime, nullable=True)
@@ -91,6 +92,15 @@ class User(db.Model):
     # Fitness Data
     target_steps = db.Column(db.Integer, default=5000)
     step_logs = db.relationship('StepLog', backref='user', lazy=True)
+
+class VaultItem(db.Model):
+    __tablename__ = 'vault_item'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    title = db.Column(db.String(100), nullable=False)
+    secret_text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Todo(db.Model):
     __tablename__ = 'todo'
@@ -237,97 +247,99 @@ def get_steps_data():
         "treadmill_steps": t_steps
     }), 200
 
-"""@app.route('/api/sync-token', methods=['GET'])
-def get_sync_token():
+@app.route('/api/steps/native-token', methods=['GET'])
+def get_native_sync_token():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    return jsonify({
-        "status": "success",
-        "step_sync_token": sync_token_serializer.dumps({"user_id": session['user_id']}),
-    }), 200
+    token = sync_token_serializer.dumps({"user_id": session['user_id']})
+    return jsonify({"status": "success", "token": token}), 200
 
 @app.route('/api/steps/sync/native', methods=['POST'])
 def sync_steps_native():
-    body = request.get_json(silent=True) or {}
-    user_id = None
-
-    # 1. Try Bearer
+    """
+    Called by react-native-step-tracker-pro's WorkManager job.
+    Auth: Authorization: Bearer <sync_token> header.
+    Payload: {source, sentAt, records: [{date, steps, distance, calories}]}
+    Idempotent: Idempotency-Key header from the plugin.
+    """
+    # 1. Authenticate via Authorization header
     auth = request.headers.get('Authorization', '')
-    if auth.startswith('Bearer '):
-        try:
-            payload = sync_token_serializer.loads(auth[7:], max_age=30 * 24 * 60 * 60)
-            user_id = int(payload['user_id'])
-        except (BadSignature, KeyError, TypeError, ValueError):
-            pass
+    if not auth.startswith('Bearer '):
+        return jsonify({"error": "Missing or invalid Authorization header"}), 401
 
-    # 2. Try query param
-    if user_id is None:
-        qs_user_id = request.args.get('user_id', type=int)
-        if qs_user_id and qs_user_id > 0:
-            user_id = qs_user_id
-
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
+    token = auth[7:].strip()
+    try:
+        payload = sync_token_serializer.loads(token, max_age=180 * 24 * 60 * 60)
+        user_id = int(payload['user_id'])
+    except (BadSignature, KeyError, TypeError, ValueError):
+        return jsonify({"error": "Invalid or expired token"}), 401
 
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
 
+    # 2. Parse the plugin's payload
+    body = request.get_json(silent=True) or {}
     records = body.get('records', [])
-    if not records and 'steps' in body:
-        records = [body]
-
     if not isinstance(records, list):
         return jsonify({"error": "Invalid payload"}), 400
 
+    idempotency_key = request.headers.get('Idempotency-Key', '')
+
+    # 3. Process each day (cumulative totals — replace, not add)
     applied = 0
     for rec in records:
         try:
             date_str = rec.get('date')
             native_total = int(rec.get('steps', 0))
+
+            if not date_str:
+                continue
+
+            try:
+                rec_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                continue
+
             if native_total <= 0:
                 continue
 
-            if not date_str:
-                rec_date = datetime.now(IST).date()
-            else:
-                try:
-                    rec_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                except ValueError:
-                    continue
-
             log = StepLog.query.filter_by(user_id=user_id, date=rec_date).first()
-            existing_total = 0
+
+            # The plugin sends CUMULATIVE daily totals, not deltas.
+            # So we SET (not add) the value, and attribute it all to walking
+            # (the plugin doesn't split walking/treadmill).
             if log:
+                # Only update if native is HIGHER than what we have —
+                # this handles the case where JS path already recorded some steps
                 existing_total = (log.walking_steps or 0) + (log.treadmill_steps or 0)
-
-            delta = native_total - existing_total
-            if delta <= 0:
-                continue
-
-            if log:
-                log.walking_steps = (log.walking_steps or 0) + delta
-                log.target_steps = user.target_steps
+                if native_total > existing_total:
+                    # Add the delta to walking
+                    log.walking_steps = (log.walking_steps or 0) + (native_total - existing_total)
+                    log.target_steps = user.target_steps
+                    applied += native_total - existing_total
             else:
                 log = StepLog(
                     user_id=user_id,
-                    walking_steps=delta,
+                    walking_steps=native_total,
                     treadmill_steps=0,
                     date=rec_date,
                     target_steps=user.target_steps,
                 )
                 db.session.add(log)
-            applied += delta
+                applied += native_total
+
         except Exception as e:
             print(f"native sync record error: {e}")
             continue
 
-    cutoff_date = datetime.now(IST).date() - timedelta(days=15)
-    StepLog.query.filter(StepLog.user_id == user_id, StepLog.date < cutoff_date).delete()
+    # 4. 15-day cleanup
+    today_ist = datetime.now(IST).date()
+    cutoff = today_ist - timedelta(days=15)
+    StepLog.query.filter(StepLog.user_id == user_id, StepLog.date < cutoff).delete()
 
     db.session.commit()
     return jsonify({"status": "success", "applied_steps": applied}), 200
-"""
 
 # NEW: This route allows the mobile app to sync step data for the current day, with separate handling for walking and treadmill steps. It checks if the user is authenticated, retrieves the step delta and mode from the request, and updates or creates a StepLog entry for today. It also includes a cleanup mechanism to delete logs older than 15 days.
 @app.route('/api/steps/sync', methods=['POST'])
