@@ -329,11 +329,6 @@ def sync_steps_native():
             print(f"native sync record error: {e}")
             continue
 
-    # 4. 15-day cleanup
-    today_ist = datetime.now(IST).date()
-    cutoff = today_ist - timedelta(days=15)
-    StepLog.query.filter(StepLog.user_id == user_id, StepLog.date < cutoff).delete()
-
     db.session.commit()
     return jsonify({"status": "success", "applied_steps": applied}), 200
 
