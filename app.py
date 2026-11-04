@@ -84,7 +84,6 @@ class User(db.Model):
     name = db.Column(db.String(150), nullable=False)
     email = db.Column(db.String(150), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    vault_pin = db.Column(db.String(200), nullable=True) # 👈 ADD THIS
     todos = db.relationship('Todo', backref='user', lazy=True)
     otp = db.Column(db.String(6), nullable=True)
     otp_expiry = db.Column(db.DateTime, nullable=True)
@@ -92,15 +91,6 @@ class User(db.Model):
     # Fitness Data
     target_steps = db.Column(db.Integer, default=5000)
     step_logs = db.relationship('StepLog', backref='user', lazy=True)
-
-class VaultItem(db.Model):
-    __tablename__ = 'vault_item'
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    title = db.Column(db.String(100), nullable=False)
-    secret_text = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Todo(db.Model):
     __tablename__ = 'todo'
