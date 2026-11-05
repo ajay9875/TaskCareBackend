@@ -201,6 +201,108 @@ def format_metric(n, decimals=1):
     }
 
 # ======================
+# ADMIN CONFIG & Routes
+# ======================
+ADMIN_EMAILS = {
+    "kumarajay69206@gmail.com",
+    "kumar.ajaysah2003@gmail.com",
+}
+
+def _is_admin(user) -> bool:
+    return bool(user and user.email and user.email.lower() in ADMIN_EMAILS)
+
+@app.route('/api/admin/users', methods=['GET'])
+def admin_list_users():
+    if 'user_id' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+    current = User.query.get(session['user_id'])
+    if not _is_admin(current):
+        return jsonify({"status": "error", "message": "Forbidden"}), 403
+
+    users = User.query.order_by(User.id.asc()).all()
+    return jsonify({
+        "status": "success",
+        "users": [
+            {
+                "id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "target_steps": u.target_steps or 5000,
+            }
+            for u in users
+        ],
+    }), 200
+
+@app.route('/api/admin/users/<int:user_id>/history', methods=['GET'])
+def admin_user_history(user_id):
+    if 'user_id' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+    current = User.query.get(session['user_id'])
+    if not _is_admin(current):
+        return jsonify({"status": "error", "message": "Forbidden"}), 403
+
+    target_user = User.query.get(user_id)
+    if not target_user:
+        return jsonify({"status": "error", "message": "User not found"}), 404
+
+    today = datetime.now(IST).date()
+    existing_logs = StepLog.query.filter_by(user_id=target_user.id).all()
+    logs_dict = {l.date: l for l in existing_logs}
+    all_dates = sorted(logs_dict.keys(), reverse=True)
+
+    history_data = []
+    total_walking = 0
+    total_treadmill = 0
+
+    for target_date in all_dates:
+        row = logs_dict[target_date]
+        w = row.walking_steps or 0
+        t = row.treadmill_steps or 0
+        total_walking += w
+        total_treadmill += t
+        history_data.append({
+            "date": target_date.strftime('%d %b'),
+            "steps": w + t,
+            "walking_steps": w,
+            "treadmill_steps": t,
+            "target_steps": (
+                target_user.target_steps
+                if target_date == today
+                else (row.target_steps or 5000)
+            ),
+        })
+
+    combined = total_walking + total_treadmill
+
+    summary = {
+        "walking_steps":   format_metric(total_walking),
+        "treadmill_steps": format_metric(total_treadmill),
+        "walking_km":      format_metric(round(total_walking   * 0.000762, 2)),
+        "walking_cal":     format_metric(round(total_walking   * 0.04)),
+        "treadmill_km":    format_metric(round(total_treadmill * 0.000762, 2)),
+        "treadmill_cal":   format_metric(round(total_treadmill * 0.0575)),
+        "combined_steps":  format_metric(combined),
+        "combined_km":     format_metric(round(combined * 0.000762, 2)),
+        "combined_cal":    format_metric(
+            round(total_walking * 0.04) + round(total_treadmill * 0.0575)
+        ),
+        "days_tracked":    len(all_dates),
+    }
+
+    return jsonify({
+        "status": "success",
+        "user": {
+            "id": target_user.id,
+            "name": target_user.name,
+            "email": target_user.email,
+        },
+        "history": history_data,
+        "summary": summary,
+    }), 200
+
+# ======================
 # API ENDPOINTS
 # ======================
 
