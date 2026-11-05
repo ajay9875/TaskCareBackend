@@ -911,7 +911,8 @@ def get_profile():
         "user": {
             "id": user.id,
             "name": user.name,
-            "email": user.email
+            "email": user.email,
+            "is_admin": _is_admin(user)        # ← ADD THIS ONE LIN
         }
     }), 200
 
@@ -951,7 +952,8 @@ def update_profile():
         "user": {
             "id": user.id,
             "name": user.name,
-            "email": user.email
+            "email": user.email,
+            "is_admin": _is_admin(user),        # ← ADD THIS
         }
     }), 200
 
