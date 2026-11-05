@@ -692,8 +692,8 @@ def signup():
     if not password:
         return jsonify({"status": "error", "message": "Password is required"}), 400
 
-    if len(password) < 8:
-        return jsonify({"status": "error", "message": "Password must be at least 8 characters long"}), 400
+    if len(password) < 6:
+        return jsonify({"status": "error", "message": "Password must be at least 6 characters long"}), 400
 
     common_passwords = {'password', '12345678', 'qwerty123', 'admin123', 'password123'}
     if password in common_passwords:
@@ -957,10 +957,24 @@ def delete_todo(sno):
 # FORGOT PASSWORD API
 # ======================
 
+import traceback   # add this to your imports
+
 def send_otp(email):
-    otp = str(random.randint(100000, 999999)) # Generate as string
+    otp = str(random.randint(100000, 999999))
     sender_email = os.getenv('EMAIL_USER')
     sender_password = os.getenv('EMAIL_PASS')
+
+    # 🔎 Sanity-check that credentials are even loaded
+    print("=" * 60)
+    print("SMTP DEBUG")
+    print(f"  EMAIL_USER set      : {bool(sender_email)}  ({sender_email})")
+    print(f"  EMAIL_PASS set      : {bool(sender_password)}  (len={len(sender_password) if sender_password else 0})")
+    print(f"  recipient           : {email}")
+    print("=" * 60)
+
+    if not sender_email or not sender_password:
+        print("❌ SMTP Error: EMAIL_USER or EMAIL_PASS environment variable is missing")
+        return None
 
     msg = EmailMessage()
     msg.set_content(f"Your TaskCare360 OTP is: {otp}\n\nValid for 3 minutes.")
@@ -970,14 +984,45 @@ def send_otp(email):
 
     try:
         context = ssl.create_default_context()
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
-            server.login(sender_email, sender_password) # type: ignore
+        print("→ Connecting to smtp.gmail.com:465 ...")
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=15) as server:
+            print("→ Connected. Logging in ...")
+            server.login(sender_email, sender_password)
+            print("→ Logged in. Sending message ...")
             server.send_message(msg)
-        return otp  # ✅ Return the OTP so the route can save it to the DB
-    except Exception as e:
-        print(f"SMTP Error: {str(e)}")
+            print("→ Message sent.")
+        return otp
+
+    # ---- FULL, EXACT ERROR REPORTING ----
+    except smtplib.SMTPAuthenticationError as e:
+        print("❌ SMTPAuthenticationError (bad username/app password)")
+        print(f"   smtp_code  : {e.smtp_code}")
+        print(f"   smtp_error : {e.smtp_error!r}")
+        traceback.print_exc()
         return None
 
+    except smtplib.SMTPException as e:
+        print("❌ SMTPException")
+        print(f"   type       : {type(e).__name__}")
+        print(f"   smtp_code  : {getattr(e, 'smtp_code', 'n/a')}")
+        print(f"   smtp_error : {getattr(e, 'smtp_error', 'n/a')!r}")
+        traceback.print_exc()
+        return None
+
+    except (OSError, ssl.SSLError) as e:
+        print("❌ Network / SSL error")
+        print(f"   type       : {type(e).__name__}")
+        print(f"   errno      : {getattr(e, 'errno', 'n/a')}")
+        print(f"   strerror   : {getattr(e, 'strerror', 'n/a')}")
+        traceback.print_exc()
+        return None
+
+    except Exception as e:
+        print("❌ Unexpected SMTP error")
+        print(f"   type       : {type(e).__name__}")
+        traceback.print_exc()
+        return None
+    
 # 1. Request OTP
 @app.route('/api/forgot_password', methods=['POST'])
 def api_forgot_password():
