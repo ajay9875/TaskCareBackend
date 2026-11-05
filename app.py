@@ -88,6 +88,9 @@ class User(db.Model):
     otp = db.Column(db.String(6), nullable=True)
     otp_expiry = db.Column(db.DateTime, nullable=True)
 
+    # 🆕 Track last activity for the admin panel
+    last_seen = db.Column(db.DateTime, nullable=True)
+
     # Fitness Data
     target_steps = db.Column(db.Integer, default=5000)
     step_logs = db.relationship('StepLog', backref='user', lazy=True)
@@ -200,6 +203,36 @@ def format_metric(n, decimals=1):
         "full":    f"{rounded:.2f}",
     }
 
+@app.before_request
+def _touch_last_seen():
+    # Only touch authenticated requests, and skip the admin list itself
+    # so we don't constantly rewrite rows during browsing.
+    if request.path.startswith('/api/admin/'):
+        return
+    uid = session.get('user_id')
+    if not uid:
+        return
+    try:
+        u = User.query.get(uid)
+        if u:
+            u.last_seen = datetime.utcnow()
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+def _humanize(delta: timedelta) -> str:
+    secs = int(delta.total_seconds())
+    if secs < 60:
+        return f"{secs}s"
+    mins = secs // 60
+    if mins < 60:
+        return f"{mins}m"
+    hrs = mins // 60
+    if hrs < 24:
+        return f"{hrs}h"
+    days = hrs // 24
+    return f"{days}d"
+
 # ======================
 # ADMIN CONFIG & Routes
 # ======================
@@ -220,6 +253,21 @@ def admin_list_users():
     if not _is_admin(current):
         return jsonify({"status": "error", "message": "Forbidden"}), 403
 
+    now = datetime.utcnow()
+    ONLINE_WINDOW = timedelta(minutes=15)
+
+    def _status(u):
+        if not u.last_seen:
+            return {"state": "never", "last_seen": None, "label": "Never signed in"}
+        delta = now - u.last_seen
+        if delta <= ONLINE_WINDOW:
+            return {"state": "online", "last_seen": u.last_seen.isoformat(), "label": "Signed in"}
+        return {
+            "state": "offline",
+            "last_seen": u.last_seen.isoformat(),
+            "label": f"Signed out · {_humanize(delta)} ago",
+        }
+
     users = User.query.order_by(User.id.asc()).all()
     return jsonify({
         "status": "success",
@@ -229,6 +277,7 @@ def admin_list_users():
                 "name": u.name,
                 "email": u.email,
                 "target_steps": u.target_steps or 5000,
+                **_status(u),
             }
             for u in users
         ],
@@ -264,6 +313,9 @@ def admin_user_history(user_id):
         total_treadmill += t
         history_data.append({
             "date": target_date.strftime('%d %b'),
+            "date_iso": target_date.isoformat(),            # "2024-11-02"
+            "date_full": target_date.strftime('%d %b %Y'),  # "02 Nov 2024"
+            "year": target_date.year,
             "steps": w + t,
             "walking_steps": w,
             "treadmill_steps": t,
@@ -297,6 +349,7 @@ def admin_user_history(user_id):
             "id": target_user.id,
             "name": target_user.name,
             "email": target_user.email,
+            "last_seen": target_user.last_seen.isoformat() if target_user.last_seen else None,
         },
         "history": history_data,
         "summary": summary,
@@ -577,6 +630,9 @@ def get_performance():
 
         history_data.append({
             "date": target_date.strftime('%d %b'),
+            "date_iso": target_date.isoformat(),            # "2024-11-02"
+            "date_full": target_date.strftime('%d %b %Y'),  # "02 Nov 2024"
+            "year": target_date.year,
             "steps": total_steps,
             "walking_steps": w_steps,
             "treadmill_steps": t_steps,
@@ -963,6 +1019,7 @@ def update_profile():
 
 @app.route('/api/logout', methods=['GET', 'POST'])
 def logout():
+
     session.clear()
     session.modified = True
 
