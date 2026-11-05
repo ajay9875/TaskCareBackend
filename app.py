@@ -754,6 +754,7 @@ def login():
 
     if user and check_password_hash(user.password, data.get('password')):
         session.clear() # Clear any old/broken sessions
+        session.modified = True           # ← add this BEFORE setting values
         session['user_id'] = user.id
         session['username'] = user.name # Add this so dashboard doesn't show 'None'
         session.permanent = True
@@ -858,11 +859,17 @@ def update_profile():
 
 @app.route('/api/logout', methods=['GET', 'POST'])
 def logout():
-    session.clear() # Wipes the server-side session
-    
-    # 👇 THIS IS THE MISSING PIECE
+    session.clear()
+    session.modified = True
+
     response = jsonify({"status": "success", "message": "Logged out successfully"})
-    response.delete_cookie('session', path='/', domain=None) 
+
+    # Delete the cookie twice — once with the production attrs, once without,
+    # so this works regardless of whether the original was flagged Secure.
+    response.delete_cookie('session', path='/', domain=None,
+                           secure=True, httponly=True, samesite='None')
+    response.delete_cookie('session', path='/', domain=None,
+                           secure=False, httponly=True, samesite='Lax')
     return response, 200
 
 # ======================
