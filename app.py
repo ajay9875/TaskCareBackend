@@ -292,7 +292,9 @@ def admin_list_users():
             "label": label,
         })
 
-    return jsonify({"status": "success", "users": out}), 200
+    return jsonify({"status": "success", 
+                    "server_now": now.isoformat() + "+05:30", 
+                    "users": out}), 200
 
 @app.route('/api/admin/users/<int:user_id>/history', methods=['GET'])
 def admin_user_history(user_id):
@@ -376,6 +378,7 @@ def admin_user_history(user_id):
 
     return jsonify({
         "status": "success",
+        "server_now": now.isoformat() + "+05:30", # <--- ADD THIS
         "user": {
             "id": target_user.id,
             "name": target_user.name,
