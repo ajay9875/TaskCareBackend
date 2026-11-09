@@ -135,6 +135,10 @@ class StepSyncEvent(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
+def now_ist_naive() -> datetime:
+    """IST clock time, no tzinfo — safe for MySQL DATETIME columns and delta math."""
+    return datetime.now(IST).replace(tzinfo=None)
+
 # ======================
 # NUMBER FORMATTING HELPERS
 # ======================
@@ -209,7 +213,6 @@ def format_metric(n, decimals=1):
 
 @app.before_request
 def _touch_last_seen():
-    # Skip admin listing to avoid clobbering the admin's own last_seen
     if request.path.startswith('/api/admin/'):
         return
     if request.method == 'OPTIONS':
@@ -220,7 +223,7 @@ def _touch_last_seen():
     try:
         u = User.query.get(uid)
         if u:
-            u.last_seen = datetime.utcnow()
+            u.last_seen = now_ist_naive()   # ← IST
             db.session.commit()
     except Exception:
         db.session.rollback()
@@ -258,37 +261,38 @@ def admin_list_users():
     if not _is_admin(current):
         return jsonify({"status": "error", "message": "Forbidden"}), 403
 
-    now = datetime.utcnow()
+    now = now_ist_naive()
     ONLINE_WINDOW = timedelta(minutes=15)
 
-    def _status(u):
+    def _derive(u):
         if not u.last_seen:
-            return {"state": "never", "last_seen": None, "label": "Never signed in"}
+            return ("never", "Not active yet")
+        if u.is_signed_in is False and u.last_status_change:
+            change_delta = now - u.last_status_change
+            if change_delta <= ONLINE_WINDOW:
+                return ("signed_out", f"Signed out · {_humanize(change_delta)} ago")
         delta = now - u.last_seen
         if delta <= ONLINE_WINDOW:
-            return {"state": "online", "last_seen": u.last_seen.isoformat(), "label": "Signed in"}
-        return {
-            "state": "offline",
-            "last_seen": u.last_seen.isoformat(),
-            "label": f"Signed out · {_humanize(delta)} ago",
-        }
+            return ("online", "Signed in · Active now")
+        return ("offline", f"Last seen {_humanize(delta)} ago")
 
-    users = User.query.order_by(User.id.desc()).all()
-    return jsonify({
-        "status": "success",
-        "users": [
-            {
-                "id": u.id,
-                "name": u.name,
-                "email": u.email,
-                "target_steps": u.target_steps or 5000,
-                "is_signed_in": u.is_signed_in,
-                "last_status_change": u.last_status_change.isoformat() if u.last_status_change else None,
-                "last_seen": u.last_seen.isoformat() if u.last_seen else None,
-            }
-            for u in users
-        ],
-    }), 200
+    users = User.query.order_by(User.id.asc()).all()
+    out = []
+    for u in users:
+        state, label = _derive(u)
+        out.append({
+            "id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "target_steps": u.target_steps or 5000,
+            "is_signed_in": u.is_signed_in,
+            "last_status_change": (u.last_status_change.isoformat() + "+05:30") if u.last_status_change else None,
+            "last_seen": (u.last_seen.isoformat() + "+05:30") if u.last_seen else None,
+            "state": state,
+            "label": label,
+        })
+
+    return jsonify({"status": "success", "users": out}), 200
 
 @app.route('/api/admin/users/<int:user_id>/history', methods=['GET'])
 def admin_user_history(user_id):
@@ -303,10 +307,9 @@ def admin_user_history(user_id):
     if not target_user:
         return jsonify({"status": "error", "message": "User not found"}), 404
 
-    now = datetime.utcnow()
+    now = now_ist_naive()             # ← IST (naive)
     ONLINE_WINDOW = timedelta(minutes=15)
 
-    # Mirror the same status logic as admin_list_users so the page is consistent
     if not target_user.last_seen:
         status_state = "never"
         status_label = "Not active yet"
@@ -319,9 +322,8 @@ def admin_user_history(user_id):
             status_state = "offline"
             status_label = f"Last seen {_humanize(delta)} ago"
 
-    # If user explicitly signed out, override
     if target_user.is_signed_in is False and target_user.last_status_change:
-        if target_user.last_status_change and (now - target_user.last_status_change) <= ONLINE_WINDOW:
+        if (now - target_user.last_status_change) <= ONLINE_WINDOW:
             status_state = "offline"
             status_label = f"Signed out · {_humanize(now - target_user.last_status_change)} ago"
 
@@ -378,8 +380,9 @@ def admin_user_history(user_id):
             "id": target_user.id,
             "name": target_user.name,
             "email": target_user.email,
-            "last_seen": target_user.last_seen.isoformat() if target_user.last_seen else None,
-            "last_status_change": target_user.last_status_change.isoformat() if target_user.last_status_change else None,
+            # ✅ Match the list endpoint:
+            "last_seen": (target_user.last_seen.isoformat() + "+05:30") if target_user.last_seen else None,
+            "last_status_change": (target_user.last_status_change.isoformat() + "+05:30") if target_user.last_status_change else None,
             "is_signed_in": bool(target_user.is_signed_in),
             "target_steps": target_user.target_steps or 5000,
             "status_state": status_state,
@@ -988,8 +991,8 @@ def login():
 
         # 👇 ADD THESE LINES
         user.is_signed_in = True
-        user.last_status_change = datetime.utcnow()
-        user.last_seen = datetime.utcnow() # Also stamp last seen
+        user.last_status_change = now_ist_naive()   # ← IST
+        user.last_seen = now_ist_naive()             # ← IST
         db.session.commit()
 
         return jsonify({
@@ -1100,7 +1103,7 @@ def logout():
         user = User.query.get(user_id)
         if user:
             user.is_signed_in = False
-            user.last_status_change = datetime.utcnow()
+            user.last_status_change = now_ist_naive()   # ← IST
             db.session.commit()
 
     session.clear()
