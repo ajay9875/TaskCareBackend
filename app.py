@@ -286,8 +286,8 @@ def admin_list_users():
             "email": u.email,
             "target_steps": u.target_steps or 5000,
             "is_signed_in": u.is_signed_in,
-            "last_status_change": (u.last_status_change.isoformat() + "+05:30") if u.last_status_change else None,
-            "last_seen": (u.last_seen.isoformat() + "+05:30") if u.last_seen else None,
+            "last_status_change": u.last_status_change.isoformat() if u.last_status_change else None,
+            "last_seen": u.last_seen.isoformat() if u.last_seen else None,
             "state": state,
             "label": label,
         })
@@ -384,8 +384,8 @@ def admin_user_history(user_id):
             "name": target_user.name,
             "email": target_user.email,
             # ✅ Match the list endpoint:
-            "last_seen": (target_user.last_seen.isoformat() + "+05:30") if target_user.last_seen else None,
-            "last_status_change": (target_user.last_status_change.isoformat() + "+05:30") if target_user.last_status_change else None,
+            "last_seen": target_user.last_seen.isoformat() if target_user.last_seen else None,
+            "last_status_change": target_user.last_status_change.isoformat() if target_user.last_status_change else None,
             "is_signed_in": bool(target_user.is_signed_in),
             "target_steps": target_user.target_steps or 5000,
             "status_state": status_state,
