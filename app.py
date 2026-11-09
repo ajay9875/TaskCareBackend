@@ -908,23 +908,16 @@ def signup():
     # 1. Basic field checks
     if not name:
         return jsonify({"status": "error", "message": "Full name is required"}), 400
-
     if len(name) < 2:
         return jsonify({"status": "error", "message": "Name must be at least 2 characters long"}), 400
-
     if not email:
         return jsonify({"status": "error", "message": "Email is required"}), 400
-
     if not confirm_email:
         return jsonify({"status": "error", "message": "Please confirm your email"}), 400
-
-    # 2. Match check (Do this BEFORE running DNS validation)
     if email != confirm_email:
         return jsonify({"status": "error", "message": "Emails do not match"}), 400
-
     if not password:
         return jsonify({"status": "error", "message": "Password is required"}), 400
-
     if len(password) < 6:
         return jsonify({"status": "error", "message": "Password must be at least 6 characters long"}), 400
 
@@ -932,7 +925,7 @@ def signup():
     if password in common_passwords:
         return jsonify({"status": "error", "message": "Password is too common. Please choose a stronger password"}), 400
 
-    # 3. Email validation (Runs without auto-correction)
+    # 2. Email validation
     is_valid, error_msg, normalized_email = validate_email_address(email)
     if not is_valid:
         return jsonify({
@@ -940,10 +933,9 @@ def signup():
             "message": error_msg,
             "code": "INVALID_EMAIL"
         }), 400
-
     email = normalized_email
 
-    # 4. Check if user exists
+    # 3. Check if user exists
     if User.query.filter_by(email=email).first():
         return jsonify({
             "status": "error",
@@ -951,7 +943,7 @@ def signup():
             "code": "EMAIL_EXISTS"
         }), 400
 
-    # 5. Create user
+    # 4. Create user
     try:
         new_user = User(
             name=name,
@@ -960,6 +952,14 @@ def signup():
         )
         db.session.add(new_user)
         db.session.commit()
+
+        # ── Fire-and-forget registration emails (non-blocking) ──
+        total_users = User.query.count()
+        threading.Thread(
+            target=send_registration_emails,
+            args=(new_user.name, new_user.email, new_user.id, total_users),
+            daemon=True,
+        ).start()
 
         return jsonify({
             "status": "success",
@@ -979,6 +979,308 @@ def signup():
             "message": "An error occurred during registration. Please try again.",
             "code": "DATABASE_ERROR"
         }), 500
+    
+# ======================
+# 📧 REGISTRATION EMAIL HELPERS
+# ======================
+
+def build_welcome_email_html(user_name: str, user_email: str) -> str:
+    """Professional welcome email HTML for new users."""
+    app_url = "https://TaskCare360.pythonanywhere.com/open-app"
+
+    return f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a2e;">
+        
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #4ecca3 0%, #2d9970 100%);
+                    padding: 32px 24px; border-radius: 20px 20px 0 0; text-align: center;">
+            <div style="font-size: 48px; line-height: 1; margin-bottom: 8px;">🎯</div>
+            <h1 style="color: #ffffff; font-size: 26px; font-weight: 800;
+                       margin: 0; letter-spacing: 0.5px;">
+                Welcome to TaskCare360!
+            </h1>
+            <p style="color: #e8fff5; font-size: 14px; margin: 8px 0 0 0; font-weight: 500;">
+                Your health & productivity journey starts now 🚀
+            </p>
+        </div>
+
+        <!-- Body -->
+        <div style="background-color: #ffffff; padding: 32px 24px;
+                    border: 1px solid #e2e8f0; border-top: none;">
+            
+            <h2 style="color: #0f172a; font-size: 20px; font-weight: 800;
+                       margin: 0 0 8px 0;">
+                Hi {user_name} 👋
+            </h2>
+            <p style="color: #475569; font-size: 15px; line-height: 1.6;
+                      margin: 0 0 24px 0;">
+                Thanks for joining <strong>TaskCare360</strong>! You've just unlocked a smarter way
+                to track your fitness, stay productive, and hit your daily goals.
+            </p>
+
+            <!-- Feature list -->
+            <div style="background-color: #f8fafc; border-radius: 16px;
+                        padding: 20px; margin-bottom: 24px;
+                        border: 1px solid #e2e8f0;">
+                <h3 style="color: #0f172a; font-size: 15px; font-weight: 800;
+                           margin: 0 0 14px 0; letter-spacing: 0.3px;">
+                    ✨ Here's what you can do:
+                </h3>
+                
+                <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
+                    <tr>
+                        <td style="width: 40px; vertical-align: top; padding: 8px 0;">
+                            <span style="font-size: 22px;">👟</span>
+                        </td>
+                        <td style="padding: 8px 0;">
+                            <strong style="color: #0f172a; font-size: 14px;">Track Every Step</strong>
+                            <div style="color: #64748b; font-size: 13px; margin-top: 2px;">
+                                Auto-count walking & treadmill activity in real time.
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="width: 40px; vertical-align: top; padding: 8px 0;">
+                            <span style="font-size: 22px;">📝</span>
+                        </td>
+                        <td style="padding: 8px 0;">
+                            <strong style="color: #0f172a; font-size: 14px;">Manage Daily Tasks</strong>
+                            <div style="color: #64748b; font-size: 13px; margin-top: 2px;">
+                                Organize, complete and celebrate your wins.
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="width: 40px; vertical-align: top; padding: 8px 0;">
+                            <span style="font-size: 22px;">🎯</span>
+                        </td>
+                        <td style="padding: 8px 0;">
+                            <strong style="color: #0f172a; font-size: 14px;">Hit Your Goals</strong>
+                            <div style="color: #64748b; font-size: 13px; margin-top: 2px;">
+                                Set step targets and get progress reminders.
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="width: 40px; vertical-align: top; padding: 8px 0;">
+                            <span style="font-size: 22px;">📊</span>
+                        </td>
+                        <td style="padding: 8px 0;">
+                            <strong style="color: #0f172a; font-size: 14px;">See Your Progress</strong>
+                            <div style="color: #64748b; font-size: 13px; margin-top: 2px;">
+                                Beautiful history views, distance, calories & more.
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- Getting started -->
+            <div style="border-left: 4px solid #4ecca3; padding: 4px 0 4px 14px;
+                        margin-bottom: 28px;">
+                <p style="color: #0f172a; font-size: 14px; font-weight: 700;
+                          margin: 0 0 4px 0;">
+                    ⚡ Quick start
+                </p>
+                <p style="color: #475569; font-size: 13px; line-height: 1.6; margin: 0;">
+                    1. Install the TaskCare360 mobile app<br/>
+                    2. Log in with your email: <strong>{user_email}</strong><br/>
+                    3. Grant step-tracking permissions<br/>
+                    4. Hit your first daily goal! 🎉
+                </p>
+            </div>
+
+            <!-- CTA Button -->
+            <div style="text-align: center; margin: 32px 0 20px 0;">
+                <a href="{app_url}"
+                   style="background-color: #4ecca3; color: #0f172a;
+                          padding: 16px 44px; text-decoration: none;
+                          border-radius: 12px; font-size: 16px; font-weight: 800;
+                          display: inline-block; letter-spacing: 0.4px;
+                          box-shadow: 0 6px 20px rgba(78, 204, 163, 0.35);">
+                    Open TaskCare360 →
+                </a>
+            </div>
+
+            <p style="color: #94a3b8; font-size: 12px; text-align: center;
+                      margin: 16px 0 0 0;">
+                ⏱️ Takes less than 2 minutes to get started.
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div style="background-color: #0f172a; padding: 24px;
+                    border-radius: 0 0 20px 20px; text-align: center;">
+            <p style="color: #94a3b8; font-size: 13px; margin: 0 0 8px 0;">
+                Need help? We're here for you.
+            </p>
+            <p style="color: #64748b; font-size: 11px; margin: 0;">
+                Reply to this email or reach us at
+                <a href="mailto:support@taskcare360.com"
+                   style="color: #4ecca3; text-decoration: none;">support@taskcare360.com</a>
+            </p>
+            <hr style="border: none; border-top: 1px solid #1e293b;
+                       margin: 16px 0;" />
+            <p style="color: #64748b; font-size: 10px; margin: 0;
+                      line-height: 1.5;">
+                TaskCare360 — Your Health & Productivity Partner 🚀<br/>
+                You're receiving this because you signed up for TaskCare360.
+            </p>
+        </div>
+    </div>
+    """
+
+
+def build_admin_notification_html(user_name: str, user_email: str,
+                                   user_id: int, total_users: int) -> str:
+    """Internal notification HTML for admin team."""
+    now_ist = datetime.now(IST)
+    signup_time = now_ist.strftime("%d %b %Y at %I:%M %p IST")
+
+    return f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a2e;">
+        
+        <!-- Header -->
+        <div style="background-color: #1e293b; padding: 24px;
+                    border-radius: 20px 20px 0 0; text-align: center;">
+            <div style="font-size: 36px; margin-bottom: 6px;">🎉</div>
+            <h1 style="color: #ffffff; font-size: 22px; font-weight: 800;
+                       margin: 0; letter-spacing: 0.3px;">
+                New User Registered!
+            </h1>
+            <p style="color: #94a3b8; font-size: 13px; margin: 6px 0 0 0;">
+                TaskCare360 · Admin Notification
+            </p>
+        </div>
+
+        <!-- Body -->
+        <div style="background-color: #ffffff; padding: 28px 24px;
+                    border: 1px solid #e2e8f0; border-top: none;">
+            
+            <p style="color: #475569; font-size: 14px; line-height: 1.6;
+                      margin: 0 0 20px 0;">
+                A new user just joined the platform. Here are the details:
+            </p>
+
+            <!-- User details card -->
+            <div style="background-color: #f8fafc; border-radius: 16px;
+                        padding: 20px; border: 1px solid #e2e8f0;
+                        margin-bottom: 20px;">
+                <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
+                    <tr>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 13px;
+                                   font-weight: 600; width: 130px;">👤 Name</td>
+                        <td style="padding: 8px 0; color: #0f172a; font-size: 14px;
+                                   font-weight: 700;">{user_name}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 13px;
+                                   font-weight: 600; border-top: 1px solid #e2e8f0;">📧 Email</td>
+                        <td style="padding: 8px 0; color: #0f172a; font-size: 14px;
+                                   font-weight: 700; border-top: 1px solid #e2e8f0;">{user_email}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 13px;
+                                   font-weight: 600; border-top: 1px solid #e2e8f0;">🆔 User ID</td>
+                        <td style="padding: 8px 0; color: #0f172a; font-size: 14px;
+                                   font-weight: 700; border-top: 1px solid #e2e8f0;">#{user_id}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 13px;
+                                   font-weight: 600; border-top: 1px solid #e2e8f0;">🕐 Registered</td>
+                        <td style="padding: 8px 0; color: #0f172a; font-size: 14px;
+                                   font-weight: 700; border-top: 1px solid #e2e8f0;">{signup_time}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- Stats -->
+            <div style="display: inline-block; background-color: #ecfdf5;
+                        color: #065f46; padding: 10px 18px; border-radius: 10px;
+                        font-size: 13px; font-weight: 700; border: 1px solid #a7f3d0;">
+                📈 Total registered users: <strong>{total_users}</strong>
+            </div>
+
+            <!-- CTA -->
+            <div style="text-align: center; margin: 28px 0 12px 0;">
+                <a href="https://TaskCare360.pythonanywhere.com/api/admin/users"
+                   style="background-color: #0f172a; color: #ffffff;
+                          padding: 14px 32px; text-decoration: none;
+                          border-radius: 10px; font-size: 14px; font-weight: 700;
+                          display: inline-block; letter-spacing: 0.3px;">
+                    View in Admin Panel →
+                </a>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="background-color: #f1f5f9; padding: 18px 24px;
+                    border-radius: 0 0 20px 20px; text-align: center;">
+            <p style="color: #64748b; font-size: 11px; margin: 0;">
+                This is an automated notification from TaskCare360.
+            </p>
+        </div>
+    </div>
+    """
+
+
+def send_registration_emails(user_name: str, user_email: str,
+                              user_id: int, total_users: int):
+    """
+    Send welcome email to new user + notification to all admins.
+    This is fire-and-forget — failures are logged but not raised.
+    """
+    sender_email = os.getenv('EMAIL_USER')
+    sender_password = os.getenv('EMAIL_PASS')
+
+    if not sender_email or not sender_password:
+        print("❌ [registration-email] SMTP credentials missing — skipping")
+        return
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465,
+                               context=ssl.create_default_context(),
+                               timeout=20) as server:
+            server.login(sender_email, sender_password)
+
+            # ── 1. Welcome email to USER ──
+            try:
+                welcome_msg = MIMEMultipart("alternative")
+                welcome_msg['From'] = f"TaskCare360 <{sender_email}>"
+                welcome_msg['To'] = user_email
+                welcome_msg['Subject'] = f"🎯 Welcome to TaskCare360, {user_name}!"
+                welcome_msg.attach(
+                    MIMEText(build_welcome_email_html(user_name, user_email),
+                             'html', 'utf-8')
+                )
+                server.send_message(welcome_msg)
+                print(f"✅ [registration-email] Welcome email sent to {user_email}")
+            except Exception as e:
+                print(f"❌ [registration-email] Welcome email failed for {user_email}: {e}")
+
+            # ── 2. Admin notification ──
+            try:
+                admin_html = build_admin_notification_html(
+                    user_name, user_email, user_id, total_users
+                )
+                admin_msg = MIMEMultipart("alternative")
+                admin_msg['From'] = f"TaskCare360 Alerts <{sender_email}>"
+                admin_msg['To'] = ", ".join(ADMIN_EMAILS)
+                admin_msg['Subject'] = f"🎉 New signup: {user_name} ({user_email})"
+                admin_msg.attach(MIMEText(admin_html, 'html', 'utf-8'))
+                server.send_message(admin_msg)
+                print(f"✅ [registration-email] Admin notification sent to {len(ADMIN_EMAILS)} admins")
+            except Exception as e:
+                print(f"❌ [registration-email] Admin notification failed: {e}")
+
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"❌ [registration-email] SMTP auth failed: {e}")
+    except (OSError, ssl.SSLError) as e:
+        print(f"❌ [registration-email] SMTP network error: {e}")
+    except Exception as e:
+        print(f"❌ [registration-email] Unexpected error: {e}")
 
 @app.route('/api/login', methods=['POST'])
 def login():
