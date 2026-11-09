@@ -91,6 +91,10 @@ class User(db.Model):
     # 🆕 Track last activity for the admin panel
     last_seen = db.Column(db.DateTime, nullable=True)
 
+    # 👇 ADD THESE TWO LINES
+    is_signed_in = db.Column(db.Boolean, default=False, nullable=False)
+    last_status_change = db.Column(db.DateTime, nullable=True)
+
     # Fitness Data
     target_steps = db.Column(db.Integer, default=5000)
     step_logs = db.relationship('StepLog', backref='user', lazy=True)
@@ -205,9 +209,10 @@ def format_metric(n, decimals=1):
 
 @app.before_request
 def _touch_last_seen():
-    # Only touch authenticated requests, and skip the admin list itself
-    # so we don't constantly rewrite rows during browsing.
+    # Skip admin listing to avoid clobbering the admin's own last_seen
     if request.path.startswith('/api/admin/'):
+        return
+    if request.method == 'OPTIONS':
         return
     uid = session.get('user_id')
     if not uid:
@@ -268,7 +273,7 @@ def admin_list_users():
             "label": f"Signed out · {_humanize(delta)} ago",
         }
 
-    users = User.query.order_by(User.id.asc()).all()
+    users = User.query.order_by(User.id.desc()).all()
     return jsonify({
         "status": "success",
         "users": [
@@ -277,7 +282,9 @@ def admin_list_users():
                 "name": u.name,
                 "email": u.email,
                 "target_steps": u.target_steps or 5000,
-                **_status(u),
+                "is_signed_in": u.is_signed_in,
+                "last_status_change": u.last_status_change.isoformat() if u.last_status_change else None,
+                "last_seen": u.last_seen.isoformat() if u.last_seen else None,
             }
             for u in users
         ],
@@ -296,6 +303,28 @@ def admin_user_history(user_id):
     if not target_user:
         return jsonify({"status": "error", "message": "User not found"}), 404
 
+    now = datetime.utcnow()
+    ONLINE_WINDOW = timedelta(minutes=15)
+
+    # Mirror the same status logic as admin_list_users so the page is consistent
+    if not target_user.last_seen:
+        status_state = "never"
+        status_label = "Not active yet"
+    else:
+        delta = now - target_user.last_seen
+        if delta <= ONLINE_WINDOW:
+            status_state = "online"
+            status_label = "Signed in · Active now"
+        else:
+            status_state = "offline"
+            status_label = f"Last seen {_humanize(delta)} ago"
+
+    # If user explicitly signed out, override
+    if target_user.is_signed_in is False and target_user.last_status_change:
+        if target_user.last_status_change and (now - target_user.last_status_change) <= ONLINE_WINDOW:
+            status_state = "offline"
+            status_label = f"Signed out · {_humanize(now - target_user.last_status_change)} ago"
+
     today = datetime.now(IST).date()
     existing_logs = StepLog.query.filter_by(user_id=target_user.id).all()
     logs_dict = {l.date: l for l in existing_logs}
@@ -313,8 +342,8 @@ def admin_user_history(user_id):
         total_treadmill += t
         history_data.append({
             "date": target_date.strftime('%d %b'),
-            "date_iso": target_date.isoformat(),            # "2024-11-02"
-            "date_full": target_date.strftime('%d %b %Y'),  # "02 Nov 2024"
+            "date_iso": target_date.isoformat(),
+            "date_full": target_date.strftime('%d %b %Y'),
             "year": target_date.year,
             "steps": w + t,
             "walking_steps": w,
@@ -350,10 +379,50 @@ def admin_user_history(user_id):
             "name": target_user.name,
             "email": target_user.email,
             "last_seen": target_user.last_seen.isoformat() if target_user.last_seen else None,
+            "last_status_change": target_user.last_status_change.isoformat() if target_user.last_status_change else None,
+            "is_signed_in": bool(target_user.is_signed_in),
+            "target_steps": target_user.target_steps or 5000,
+            "status_state": status_state,
+            "status_label": status_label,
         },
         "history": history_data,
         "summary": summary,
     }), 200
+
+@app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+def admin_delete_user(user_id):
+    if 'user_id' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+    current = User.query.get(session['user_id'])
+    if not _is_admin(current):
+        return jsonify({"status": "error", "message": "Forbidden"}), 403
+
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({"status": "error", "message": "User not found"}), 404
+
+    # Guard: don't let an admin delete themselves
+    if target.id == current.id:
+        return jsonify({"status": "error", "message": "You cannot delete your own account"}), 400
+
+    # Guard: don't allow deleting another admin
+    if _is_admin(target):
+        return jsonify({"status": "error", "message": "Cannot delete another admin"}), 400
+
+    try:
+        # Cascade: push tokens, step logs, sync events, todos
+        PushToken.query.filter_by(user_id=target.id).delete()
+        StepLog.query.filter_by(user_id=target.id).delete()
+        StepSyncEvent.query.filter_by(user_id=target.id).delete()
+        Todo.query.filter_by(user_id=target.id).delete()
+        db.session.delete(target)
+        db.session.commit()
+        return jsonify({"status": "success", "message": f"User #{user_id} deleted"}), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Delete user failed: {e}")
+        return jsonify({"status": "error", "message": "Delete failed"}), 500
 
 # ======================
 # API ENDPOINTS
@@ -917,6 +986,12 @@ def login():
         session['username'] = user.name # Add this so dashboard doesn't show 'None'
         session.permanent = True
 
+        # 👇 ADD THESE LINES
+        user.is_signed_in = True
+        user.last_status_change = datetime.utcnow()
+        user.last_seen = datetime.utcnow() # Also stamp last seen
+        db.session.commit()
+
         return jsonify({
             "status": "success",
             "user": {"id": user.id, "name": user.name},
@@ -1019,18 +1094,21 @@ def update_profile():
 
 @app.route('/api/logout', methods=['GET', 'POST'])
 def logout():
+    # 👇 GET USER BEFORE CLEARING SESSION
+    user_id = session.get('user_id')
+    if user_id:
+        user = User.query.get(user_id)
+        if user:
+            user.is_signed_in = False
+            user.last_status_change = datetime.utcnow()
+            db.session.commit()
 
     session.clear()
     session.modified = True
 
     response = jsonify({"status": "success", "message": "Logged out successfully"})
-
-    # Delete the cookie twice — once with the production attrs, once without,
-    # so this works regardless of whether the original was flagged Secure.
-    response.delete_cookie('session', path='/', domain=None,
-                           secure=True, httponly=True, samesite='None')
-    response.delete_cookie('session', path='/', domain=None,
-                           secure=False, httponly=True, samesite='Lax')
+    response.delete_cookie('session', path='/', domain=None, secure=True, httponly=True, samesite='None')
+    response.delete_cookie('session', path='/', domain=None, secure=False, httponly=True, samesite='Lax')
     return response, 200
 
 # ======================

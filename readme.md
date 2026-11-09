@@ -5,6 +5,20 @@ A full-stack Todo application built with **React Native (Expo)** and **Flask (SQ
 - **/TaskCareBackend**: Flask REST API, SQLite/MySQL database, and OTP-based authentication.
 - **/TaskCareMobile**: React Native frontend using Expo Router and Context API.
 
+## DB migration step with commands
+# 0. Activate venv + set FLASK_APP (once per terminal session)
+# 1. Initialize migrations folder (one-time, only if not already done)
+flask db init
+
+# 2. Generate a migration from your models
+flask db migrate -m "add last_seen, is_signed_in, last_status_change columns"
+
+# 3. Review the generated file in migrations/versions/
+#    It should contain only the missing ALTER TABLE statements
+
+# 4. Apply to production
+flask db upgrade
+
 ## 🛠️ Tech Stack
 - **Frontend:** React Native, Expo, Lucide Icons.
 - **Backend:** Python, Flask, Flask-SQLAlchemy, Flask-CORS.
