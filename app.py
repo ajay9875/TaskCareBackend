@@ -413,7 +413,7 @@ def rename_team():
             "status": "success",
             "message": "Team renamed successfully",
             "team": {"id": team.id, "name": team.name},
-        }), 200
+        }), 200 
     except Exception as e:
         db.session.rollback()
         print(f"❌ Rename team failed: {e}")
