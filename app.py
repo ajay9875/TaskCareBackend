@@ -710,7 +710,7 @@ def admin_list_users():
                     "server_now": now.isoformat() + "+05:30", 
                     "users": out}), 200
 
-@app.route('/api/admin/users/<int:user_id>/history', methods=['GET'])
+"""@app.route('/api/admin/users/<int:user_id>/history', methods=['GET'])
 def admin_user_history(user_id):
     if 'user_id' not in session:
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
@@ -807,7 +807,7 @@ def admin_user_history(user_id):
         },
         "history": history_data,
         "summary": summary,
-    }), 200
+    }), 200"""
 
 @app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
 def admin_delete_user(user_id):
