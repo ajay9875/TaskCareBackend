@@ -69,6 +69,26 @@ IST = ZoneInfo("Asia/Kolkata")
 # MODELS
 # ======================
 
+# In app.py, add this below your StepSyncEvent model
+import secrets
+
+class Team(db.Model):
+    __tablename__ = 'team'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    join_code = db.Column(db.String(10), unique=True, nullable=False, default=lambda: secrets.token_hex(4).upper())
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    members = db.relationship('TeamMember', backref='team', lazy=True)
+
+class TeamMember(db.Model):
+    __tablename__ = 'team_member'
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    role = db.Column(db.String(20), default='member') # 'admin' or 'member'
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('team_id', 'user_id', name='_team_user_uc'),)
+
 class PushToken(db.Model):
     __tablename__ = 'push_token'
     id = db.Column(db.Integer, primary_key=True)
@@ -240,6 +260,104 @@ def _humanize(delta: timedelta) -> str:
         return f"{hrs}h"
     days = hrs // 24
     return f"{days}d"
+
+# --- TEAM MANAGEMENT ROUTES ---
+
+@app.route('/api/teams/my-team', methods=['GET'])
+def get_my_team():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    # Check if user is in a team
+    membership = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    if not membership:
+        return jsonify({"status": "success", "team": None}), 200
+    
+    team = Team.query.get(membership.team_id)
+    
+    # Get all members and their today's steps
+    today = datetime.now(IST).date()
+    members_data = []
+    
+    for m in team.members:
+        user = User.query.get(m.user_id)
+        log = StepLog.query.filter_by(user_id=user.id, date=today).first()
+        steps = (log.walking_steps or 0) + (log.treadmill_steps or 0) if log else 0
+        
+        members_data.append({
+            "user_id": user.id,
+            "name": user.name,
+            "role": m.role,
+            "steps_today": steps,
+            "is_signed_in": user.is_signed_in,
+            "last_seen": user.last_seen.isoformat() if user.last_seen else None
+        })
+        
+    return jsonify({
+        "status": "success",
+        "team": {
+            "id": team.id,
+            "name": team.name,
+            "join_code": team.join_code,
+            "is_admin": membership.role == 'admin',
+            "members": members_data
+        }
+    }), 200
+
+@app.route('/api/teams/create', methods=['POST'])
+def create_team():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    data = request.get_json()
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({"error": "Team name is required"}), 400
+        
+    try:
+        # Create team
+        new_team = Team(name=name, created_by=session['user_id'])
+        db.session.add(new_team)
+        db.session.flush() # Get team ID
+        
+        # Add creator as admin
+        admin_member = TeamMember(team_id=new_team.id, user_id=session['user_id'], role='admin')
+        db.session.add(admin_member)
+        
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Team created!", "join_code": new_team.join_code}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/teams/join', methods=['POST'])
+def join_team():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+        
+    data = request.get_json()
+    code = data.get('code', '').strip().upper()
+    
+    if not code:
+        return jsonify({"error": "Team code is required"}), 400
+        
+    team = Team.query.filter_by(join_code=code).first()
+    if not team:
+        return jsonify({"error": "Invalid team code"}), 404
+        
+    # Check if already in a team
+    existing = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    if existing:
+        return jsonify({"error": "You are already in a team"}), 400
+        
+    try:
+        new_member = TeamMember(team_id=team.id, user_id=session['user_id'], role='member')
+        db.session.add(new_member)
+        db.session.commit()
+        return jsonify({"status": "success", "message": f"Joined {team.name}!"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 # ======================
 # ADMIN CONFIG & Routes
