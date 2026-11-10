@@ -79,6 +79,7 @@ class Team(db.Model):
     join_code = db.Column(db.String(10), unique=True, nullable=False, default=lambda: secrets.token_hex(4).upper())
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     members = db.relationship('TeamMember', backref='team', lazy=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class TeamMember(db.Model):
     __tablename__ = 'team_member'
@@ -107,6 +108,7 @@ class User(db.Model):
     todos = db.relationship('Todo', backref='user', lazy=True)
     otp = db.Column(db.String(6), nullable=True)
     otp_expiry = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow) # 👈 ADD THIS
 
     # 🆕 Track last activity for the admin panel
     last_seen = db.Column(db.DateTime, nullable=True)
@@ -261,6 +263,57 @@ def _humanize(delta: timedelta) -> str:
     days = hrs // 24
     return f"{days}d"
 
+@app.route('/api/admin/verify-pin', methods=['POST'])
+def verify_super_admin_pin():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    current = User.query.get(session['user_id'])
+    if not _is_admin(current):
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json()
+    entered_pin = str(data.get('pin', '')).strip()
+    correct_pin = os.getenv('SUPER_ADMIN_PIN', '123456')
+
+    if entered_pin == correct_pin:
+        session['super_admin_access'] = True
+        return jsonify({"status": "success", "message": "Access Granted"}), 200
+    else:
+        return jsonify({"error": "Invalid PIN"}), 403
+
+@app.route('/api/superadmin/teams', methods=['GET'])
+def superadmin_list_teams():
+    if 'user_id' not in session or not session.get('super_admin_access'):
+        return jsonify({"error": "Super Admin Access Required"}), 403
+
+    teams = Team.query.order_by(Team.id.desc()).all()
+    out = []
+    now = datetime.utcnow()
+
+    for t in teams:
+        # Get admin name
+        admin = User.query.get(t.created_by)
+        
+        # Calculate age
+        delta = now - t.created_at
+        if delta.days > 0:
+            age = f"{delta.days}d ago"
+        elif delta.seconds > 3600:
+            age = f"{delta.seconds // 3600}h ago"
+        else:
+            age = f"{delta.seconds // 60}m ago"
+
+        out.append({
+            "id": t.id,
+            "name": t.name,
+            "join_code": t.join_code,
+            "created_by": admin.name if admin else "Unknown",
+            "created_at_label": age,
+            "member_count": len(t.members)
+        })
+    return jsonify({"status": "success", "teams": out}), 200
+
 # --- TEAM MANAGEMENT ROUTES ---
 
 @app.route('/api/teams/my-team', methods=['GET'])
@@ -370,6 +423,35 @@ ADMIN_EMAILS = {
 def _is_admin(user) -> bool:
     return bool(user and user.email and user.email.lower() in ADMIN_EMAILS)
 
+@app.route('/api/superadmin/teams/<int:team_id>', methods=['GET'])
+def superadmin_get_team(team_id):
+    if 'user_id' not in session or not session.get('super_admin_access'):
+        return jsonify({"error": "Super Admin Access Required"}), 403
+
+    team = Team.query.get(team_id)
+    if not team:
+        return jsonify({"error": "Team not found"}), 404
+
+    members_data = []
+    for m in team.members:
+        u = User.query.get(m.user_id)
+        members_data.append({
+            "user_id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "role": m.role
+        })
+
+    return jsonify({
+        "status": "success",
+        "team": {
+            "id": team.id,
+            "name": team.name,
+            "join_code": team.join_code,
+            "members": members_data
+        }
+    }), 200
+
 @app.route('/api/admin/users', methods=['GET'])
 def admin_list_users():
     if 'user_id' not in session:
@@ -398,6 +480,16 @@ def admin_list_users():
     out = []
     for u in users:
         state, label = _derive(u)
+
+        # Calculate age
+        created_delta = now - (u.created_at or now)
+        if created_delta.days > 0:
+            created_label = f"{created_delta.days}d ago"
+        elif created_delta.seconds > 3600:
+            created_label = f"{created_delta.seconds // 3600}h ago"
+        else:
+            created_label = f"{created_delta.seconds // 60}m ago"
+
         out.append({
             "id": u.id,
             "name": u.name,
@@ -408,6 +500,7 @@ def admin_list_users():
             "last_seen": u.last_seen.isoformat() if u.last_seen else None,
             "state": state,
             "label": label,
+            "created_at_label": created_label  # 👈 ADD THIS
         })
 
     return jsonify({"status": "success", 
