@@ -388,7 +388,7 @@ def join_team_redirect():
     code = request.args.get('code', '').strip().upper()
     safe_code = quote(code, safe='')
     return redirect(f"taskcaremobile://teams/join?code={safe_code}")
-
+ 
 @app.route('/api/teams/rename', methods=['POST'])
 def rename_team():
     if 'user_id' not in session:
