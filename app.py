@@ -387,7 +387,8 @@ from urllib.parse import quote  # add at top of file
 def join_team_redirect():
     code = request.args.get('code', '').strip().upper()
     safe_code = quote(code, safe='')
-    return redirect(f"taskcaremobile://teams/join?code={safe_code}")
+    # Modify to teams (corresponding to app/teams/index.tsx)
+    return redirect(f"taskcaremobile://teams?prefill={safe_code}")
  
 @app.route('/api/teams/rename', methods=['POST'])
 def rename_team():
