@@ -274,7 +274,7 @@ def verify_super_admin_pin():
 
     data = request.get_json()
     entered_pin = str(data.get('pin', '')).strip()
-    correct_pin = os.getenv('SUPER_ADMIN_PIN', '123456')
+    correct_pin = os.getenv('SUPER_ADMIN_PIN')
 
     if entered_pin == correct_pin:
         session['super_admin_access'] = True
@@ -314,6 +314,29 @@ def superadmin_list_teams():
         })
     return jsonify({"status": "success", "teams": out}), 200
 
+@app.route('/api/superadmin/teams/<int:team_id>', methods=['DELETE'])
+def superadmin_delete_team(team_id):
+    if 'user_id' not in session or not session.get('super_admin_access'):
+        return jsonify({"error": "Super Admin Access Required"}), 403
+
+    team = Team.query.get(team_id)
+    if not team:
+        return jsonify({"error": "Team not found"}), 404
+
+    try:
+        # Cascade: remove memberships, then the team itself.
+        TeamMember.query.filter_by(team_id=team.id).delete()
+        db.session.delete(team)
+        db.session.commit()
+        return jsonify({
+            "status": "success",
+            "message": f"Team #{team_id} deleted"
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Delete team failed: {e}")
+        return jsonify({"status": "error", "message": "Delete failed"}), 500
+
 # --- TEAM MANAGEMENT ROUTES ---
 
 @app.route('/api/teams/my-team', methods=['GET'])
@@ -343,7 +366,7 @@ def get_my_team():
             "role": m.role,
             "steps_today": steps,
             "is_signed_in": user.is_signed_in,
-            "last_seen": user.last_seen.isoformat() if user.last_seen else None
+            "last_seen": user.last_seen.isoformat() if user.last_seen else None,
         })
         
     return jsonify({
@@ -353,9 +376,162 @@ def get_my_team():
             "name": team.name,
             "join_code": team.join_code,
             "is_admin": membership.role == 'admin',
+            "current_user_id": session['user_id'],   # ← add this line
             "members": members_data
         }
     }), 200
+
+@app.route('/api/teams/rename', methods=['POST'])
+def rename_team():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    new_name = (data.get('name') or '').strip()
+
+    if not new_name:
+        return jsonify({"error": "Team name is required"}), 400
+    if len(new_name) < 2:
+        return jsonify({"error": "Team name must be at least 2 characters"}), 400
+    if len(new_name) > 150:
+        return jsonify({"error": "Team name must be 150 characters or fewer"}), 400
+
+    membership = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    if not membership:
+        return jsonify({"error": "You are not in a team"}), 404
+    if membership.role != 'admin':
+        return jsonify({"error": "Only team admins can rename the team"}), 403
+
+    team = Team.query.get(membership.team_id)
+    if not team:
+        return jsonify({"error": "Team not found"}), 404
+
+    try:
+        team.name = new_name
+        db.session.commit()
+        return jsonify({
+            "status": "success",
+            "message": "Team renamed successfully",
+            "team": {"id": team.id, "name": team.name},
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Rename team failed: {e}")
+        return jsonify({"error": "Rename failed"}), 500
+
+def _build_user_history_payload(target_user: User):
+    """Shared history payload for both admin & team-admin views."""
+    now = now_ist_naive()
+    ONLINE_WINDOW = timedelta(minutes=15)
+
+    if not target_user.last_seen:
+        status_state = "never"
+        status_label = "Not active yet"
+    else:
+        delta = now - target_user.last_seen
+        if delta <= ONLINE_WINDOW:
+            status_state = "online"
+            status_label = "Signed in · Active now"
+        else:
+            status_state = "offline"
+            status_label = f"Last seen {_humanize(delta)} ago"
+
+    if target_user.is_signed_in is False and target_user.last_status_change:
+        if (now - target_user.last_status_change) <= ONLINE_WINDOW:
+            status_state = "offline"
+            status_label = f"Signed out · {_humanize(now - target_user.last_status_change)} ago"
+
+    today = datetime.now(IST).date()
+    existing_logs = StepLog.query.filter_by(user_id=target_user.id).all()
+    logs_dict = {l.date: l for l in existing_logs}
+    all_dates = sorted(logs_dict.keys(), reverse=True)
+
+    history_data = []
+    total_walking = 0
+    total_treadmill = 0
+
+    for target_date in all_dates:
+        row = logs_dict[target_date]
+        w = row.walking_steps or 0
+        t = row.treadmill_steps or 0
+        total_walking += w
+        total_treadmill += t
+        history_data.append({
+            "date": target_date.strftime('%d %b'),
+            "date_iso": target_date.isoformat(),
+            "date_full": target_date.strftime('%d %b %Y'),
+            "year": target_date.year,
+            "steps": w + t,
+            "walking_steps": w,
+            "treadmill_steps": t,
+            "target_steps": (
+                target_user.target_steps
+                if target_date == today
+                else (row.target_steps or 5000)
+            ),
+        })
+
+    combined = total_walking + total_treadmill
+
+    summary = {
+        "walking_steps":   format_metric(total_walking),
+        "treadmill_steps": format_metric(total_treadmill),
+        "walking_km":      format_metric(round(total_walking   * 0.000762, 2)),
+        "walking_cal":     format_metric(round(total_walking   * 0.04)),
+        "treadmill_km":    format_metric(round(total_treadmill * 0.000762, 2)),
+        "treadmill_cal":   format_metric(round(total_treadmill * 0.0575)),
+        "combined_steps":  format_metric(combined),
+        "combined_km":     format_metric(round(combined * 0.000762, 2)),
+        "combined_cal":    format_metric(
+            round(total_walking * 0.04) + round(total_treadmill * 0.0575)
+        ),
+        "days_tracked":    len(all_dates),
+    }
+
+    return jsonify({
+        "status": "success",
+        "server_now": now.isoformat() + "+05:30",
+        "user": {
+            "id": target_user.id,
+            "name": target_user.name,
+            "email": target_user.email,
+            "last_seen": target_user.last_seen.isoformat() if target_user.last_seen else None,
+            "last_status_change": target_user.last_status_change.isoformat() if target_user.last_status_change else None,
+            "is_signed_in": bool(target_user.is_signed_in),
+            "target_steps": target_user.target_steps or 5000,
+            "status_state": status_state,
+            "status_label": status_label,
+        },
+        "history": history_data,
+        "summary": summary,
+    }), 200
+
+@app.route('/api/admin/users/<int:user_id>/history', methods=['GET'])
+def admin_user_history(user_id):
+    if 'user_id' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+    current = User.query.get(session['user_id'])
+    if not _is_admin(current):
+        return jsonify({"status": "error", "message": "Forbidden"}), 403
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({"status": "error", "message": "User not found"}), 404
+    return _build_user_history_payload(target)
+
+
+@app.route('/api/teams/member/<int:member_id>/history', methods=['GET'])
+def team_member_history(member_id):
+    if 'user_id' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+    caller = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    if not caller or caller.role != 'admin':
+        return jsonify({"status": "error", "message": "Only team admins can view member history"}), 403
+    if not TeamMember.query.filter_by(team_id=caller.team_id, user_id=member_id).first():
+        return jsonify({"status": "error", "message": "User is not in your team"}), 404
+    target = User.query.get(member_id)
+    if not target:
+        return jsonify({"status": "error", "message": "User not found"}), 404
+    return _build_user_history_payload(target)
 
 @app.route('/api/teams/create', methods=['POST'])
 def create_team():
@@ -408,6 +584,33 @@ def join_team():
         db.session.add(new_member)
         db.session.commit()
         return jsonify({"status": "success", "message": f"Joined {team.name}!"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/teams/members/<int:member_id>', methods=['DELETE'])
+def remove_team_member(member_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # 1. Check if the requester is a team admin
+    current_member = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    if not current_member or current_member.role != 'admin':
+        return jsonify({"error": "Only team admins can remove members"}), 403
+
+    # 2. Prevent admin from removing themselves via this route
+    if member_id == session['user_id']:
+        return jsonify({"error": "You cannot remove yourself. Transfer ownership or delete team."}), 400
+
+    # 3. Find the target member
+    target_member = TeamMember.query.filter_by(team_id=current_member.team_id, user_id=member_id).first()
+    if not target_member:
+        return jsonify({"error": "Member not found in your team"}), 404
+
+    try:
+        db.session.delete(target_member)
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Member removed successfully"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
