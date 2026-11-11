@@ -537,9 +537,15 @@ def team_member_history(member_id):
     if 'user_id' not in session:
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
 
-    caller = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    # ✅ Get the team_id passed from the frontend
+    team_id = request.args.get('team_id', type=int)
+    if not team_id:
+        return jsonify({"status": "error", "message": "team_id is required"}), 400
+
+    # ✅ Find the CALLER's membership for THIS SPECIFIC team
+    caller = TeamMember.query.filter_by(user_id=session['user_id'], team_id=team_id).first()
     if not caller:
-        return jsonify({"status": "error", "message": "You are not in a team"}), 403
+        return jsonify({"status": "error", "message": "You are not in this team"}), 403
 
     is_self = (member_id == session['user_id'])
     is_admin = (caller.role == 'admin')
@@ -551,9 +557,8 @@ def team_member_history(member_id):
             "message": "Detailed history is private. Ask the team admin."
         }), 403
 
-    if not TeamMember.query.filter_by(
-        team_id=caller.team_id, user_id=member_id
-    ).first():
+    # Ensure the target user is actually in this team
+    if not TeamMember.query.filter_by(team_id=team_id, user_id=member_id).first():
         return jsonify({"status": "error", "message": "User is not in your team"}), 404
 
     target = User.query.get(member_id)
@@ -593,27 +598,26 @@ def create_team():
 
 @app.route('/api/teams/delete', methods=['DELETE'])
 def delete_my_team():
-    """
-    Team admin can delete their own team.
-    Cascades: removes every TeamMember row, then the Team itself.
-    Does NOT delete the users' StepLogs / Todos — those belong to the users.
-    """
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
-    membership = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    # ✅ Frontend must pass the team_id of the team being deleted
+    team_id = request.args.get('team_id', type=int)
+    if not team_id:
+        return jsonify({"error": "team_id is required"}), 400
+
+    membership = TeamMember.query.filter_by(user_id=session['user_id'], team_id=team_id).first()
     if not membership:
-        return jsonify({"error": "You are not in a team"}), 404
+        return jsonify({"error": "You are not in this team"}), 404
 
     if membership.role != 'admin':
         return jsonify({"error": "Only team admins can delete the team"}), 403
 
-    team = Team.query.get(membership.team_id)
+    team = Team.query.get(team_id)
     if not team:
         return jsonify({"error": "Team not found"}), 404
 
     try:
-        # Remove every membership row for this team (admins + members)
         TeamMember.query.filter_by(team_id=team.id).delete()
         db.session.delete(team)
         db.session.commit()
@@ -623,8 +627,37 @@ def delete_my_team():
         }), 200
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Delete team failed: {e}")
         return jsonify({"error": "Delete failed"}), 500
+
+@app.route('/api/teams/members/<int:member_id>', methods=['DELETE'])
+def remove_team_member(member_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # ✅ Frontend must pass the team_id
+    team_id = request.args.get('team_id', type=int)
+    if not team_id:
+        return jsonify({"error": "team_id is required"}), 400
+
+    # Check requester's admin status IN THIS SPECIFIC TEAM
+    current_member = TeamMember.query.filter_by(user_id=session['user_id'], team_id=team_id).first()
+    if not current_member or current_member.role != 'admin':
+        return jsonify({"error": "Only team admins can remove members"}), 403
+
+    if member_id == session['user_id']:
+        return jsonify({"error": "You cannot remove yourself."}), 400
+
+    target_member = TeamMember.query.filter_by(team_id=team_id, user_id=member_id).first()
+    if not target_member:
+        return jsonify({"error": "Member not found in your team"}), 404
+
+    try:
+        db.session.delete(target_member) # ONLY deletes the membership
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Member removed successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/teams/join', methods=['POST'])
 def join_team():
@@ -656,33 +689,6 @@ def join_team():
         db.session.add(new_member)
         db.session.commit()
         return jsonify({"status": "success", "message": f"Joined {team.name}!"}), 200
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": str(e)}), 500
-    
-@app.route('/api/teams/members/<int:member_id>', methods=['DELETE'])
-def remove_team_member(member_id):
-    if 'user_id' not in session:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    # 1. Check if the requester is a team admin
-    current_member = TeamMember.query.filter_by(user_id=session['user_id']).first()
-    if not current_member or current_member.role != 'admin':
-        return jsonify({"error": "Only team admins can remove members"}), 403
-
-    # 2. Prevent admin from removing themselves via this route
-    if member_id == session['user_id']:
-        return jsonify({"error": "You cannot remove yourself. Transfer ownership or delete team."}), 400
-
-    # 3. Find the target member
-    target_member = TeamMember.query.filter_by(team_id=current_member.team_id, user_id=member_id).first()
-    if not target_member:
-        return jsonify({"error": "Member not found in your team"}), 404
-
-    try:
-        db.session.delete(target_member)
-        db.session.commit()
-        return jsonify({"status": "success", "message": "Member removed successfully"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
