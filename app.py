@@ -339,47 +339,51 @@ def superadmin_delete_team(team_id):
 
 # --- TEAM MANAGEMENT ROUTES ---
 
+MAX_TEAMS_PER_USER = 10
+
 @app.route('/api/teams/my-team', methods=['GET'])
 def get_my_team():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
     
-    # Check if user is in a team
-    membership = TeamMember.query.filter_by(user_id=session['user_id']).first()
-    if not membership:
-        return jsonify({"status": "success", "team": None}), 200
+    # Get ALL memberships for this user
+    memberships = TeamMember.query.filter_by(user_id=session['user_id']).all()
+    if not memberships:
+        return jsonify({"status": "success", "teams": []}), 200
     
-    team = Team.query.get(membership.team_id)
-    
-    # Get all members and their today's steps
     today = datetime.now(IST).date()
-    members_data = []
+    teams_data = []
     
-    for m in team.members:
-        user = User.query.get(m.user_id)
-        log = StepLog.query.filter_by(user_id=user.id, date=today).first()
-        steps = (log.walking_steps or 0) + (log.treadmill_steps or 0) if log else 0
-        
-        members_data.append({
-            "user_id": user.id,
-            "name": user.name,
-            "role": m.role,
-            "steps_today": steps,
-            "is_signed_in": user.is_signed_in,
-            "last_seen": user.last_seen.isoformat() if user.last_seen else None,
-        })
-        
-    return jsonify({
-        "status": "success",
-        "team": {
+    for membership in memberships:
+        team = Team.query.get(membership.team_id)
+        if not team:
+            continue
+            
+        members_data = []
+        for m in team.members:
+            user = User.query.get(m.user_id)
+            log = StepLog.query.filter_by(user_id=user.id, date=today).first()
+            steps = (log.walking_steps or 0) + (log.treadmill_steps or 0) if log else 0
+            
+            members_data.append({
+                "user_id": user.id,
+                "name": user.name,
+                "role": m.role,
+                "steps_today": steps,
+                "is_signed_in": user.is_signed_in,
+                "last_seen": user.last_seen.isoformat() if user.last_seen else None,
+            })
+            
+        teams_data.append({
             "id": team.id,
             "name": team.name,
             "join_code": team.join_code,
             "is_admin": membership.role == 'admin',
-            "current_user_id": session['user_id'],   # ← add this line
+            "current_user_id": session['user_id'],
             "members": members_data
-        }
-    }), 200
+        })
+        
+    return jsonify({"status": "success", "teams": teams_data}), 200
 
 from urllib.parse import quote  # add at top of file
 
@@ -563,18 +567,21 @@ def create_team():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
     
+    # ✅ Enforce the 10-team limit
+    team_count = TeamMember.query.filter_by(user_id=session['user_id']).count()
+    if team_count >= MAX_TEAMS_PER_USER:
+        return jsonify({"error": "You can only be in a maximum of 10 teams. Please contact admin."}), 403
+
     data = request.get_json()
     name = data.get('name', '').strip()
     if not name:
         return jsonify({"error": "Team name is required"}), 400
         
     try:
-        # Create team
         new_team = Team(name=name, created_by=session['user_id'])
         db.session.add(new_team)
-        db.session.flush() # Get team ID
+        db.session.flush()
         
-        # Add creator as admin
         admin_member = TeamMember(team_id=new_team.id, user_id=session['user_id'], role='admin')
         db.session.add(admin_member)
         
@@ -634,10 +641,15 @@ def join_team():
     if not team:
         return jsonify({"error": "Invalid team code"}), 404
         
-    # Check if already in a team
-    existing = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    # Check if already in THIS specific team
+    existing = TeamMember.query.filter_by(user_id=session['user_id'], team_id=team.id).first()
     if existing:
-        return jsonify({"error": "You are already in a team"}), 400
+        return jsonify({"error": "You are already in this team"}), 400
+
+    # ✅ Enforce the 10-team limit
+    team_count = TeamMember.query.filter_by(user_id=session['user_id']).count()
+    if team_count >= MAX_TEAMS_PER_USER:
+        return jsonify({"error": "You can only be in a maximum of 10 teams. Please contact admin."}), 403
         
     try:
         new_member = TeamMember(team_id=team.id, user_id=session['user_id'], role='member')
@@ -647,7 +659,7 @@ def join_team():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
-
+    
 @app.route('/api/teams/members/<int:member_id>', methods=['DELETE'])
 def remove_team_member(member_id):
     if 'user_id' not in session:
