@@ -341,7 +341,7 @@ def superadmin_delete_team(team_id):
 
 MAX_TEAMS_PER_USER = 10
 
-@app.route('/api/teams/my-team', methods=['GET'])
+@app.route('/api/teams/my-teams', methods=['GET'])
 def get_my_team():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
@@ -401,7 +401,10 @@ def rename_team():
 
     data = request.get_json(silent=True) or {}
     new_name = (data.get('name') or '').strip()
+    team_id = data.get('team_id')                       # ✅ NEW
 
+    if not team_id:
+        return jsonify({"error": "team_id is required"}), 400
     if not new_name:
         return jsonify({"error": "Team name is required"}), 400
     if len(new_name) < 2:
@@ -409,13 +412,15 @@ def rename_team():
     if len(new_name) > 150:
         return jsonify({"error": "Team name must be 150 characters or fewer"}), 400
 
-    membership = TeamMember.query.filter_by(user_id=session['user_id']).first()
+    membership = TeamMember.query.filter_by(
+        user_id=session['user_id'], team_id=team_id
+    ).first()                                           # ✅ SPECIFIC team
     if not membership:
-        return jsonify({"error": "You are not in a team"}), 404
+        return jsonify({"error": "You are not in this team"}), 404
     if membership.role != 'admin':
         return jsonify({"error": "Only team admins can rename the team"}), 403
 
-    team = Team.query.get(membership.team_id)
+    team = Team.query.get(team_id)
     if not team:
         return jsonify({"error": "Team not found"}), 404
 
@@ -426,11 +431,12 @@ def rename_team():
             "status": "success",
             "message": "Team renamed successfully",
             "team": {"id": team.id, "name": team.name},
-        }), 200 
+        }), 200
     except Exception as e:
         db.session.rollback()
         print(f"❌ Rename team failed: {e}")
         return jsonify({"error": "Rename failed"}), 500
+
 
 def _build_user_history_payload(target_user: User):
     """Shared history payload for both admin & team-admin views."""
