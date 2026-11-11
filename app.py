@@ -1298,7 +1298,7 @@ def contact_support():
 @app.route('/open-app')
 def open_app():
     # ✅ Updated scheme path from 'login' to 'dashboard' to target the home file directly
-    print("Attempting to open the TaskCare360 Dashboard application. If installed, you will be redirected shortly.")
+    print("Attempting to open the FitWisely Dashboard application. If installed, you will be redirected shortly.")
     return redirect("taskcaremobile://dashboard")
 
 # ======================
@@ -1499,7 +1499,7 @@ def build_welcome_email_html(user_name: str, user_email: str) -> str:
             <div style="font-size: 48px; line-height: 1; margin-bottom: 8px;">🎯</div>
             <h1 style="color: #ffffff; font-size: 26px; font-weight: 800;
                        margin: 0; letter-spacing: 0.5px;">
-                Welcome to TaskCare360!
+                Welcome to FitWisely!
             </h1>
             <p style="color: #e8fff5; font-size: 14px; margin: 8px 0 0 0; font-weight: 500;">
                 Your health & productivity journey starts now 🚀
@@ -1516,7 +1516,7 @@ def build_welcome_email_html(user_name: str, user_email: str) -> str:
             </h2>
             <p style="color: #475569; font-size: 15px; line-height: 1.6;
                       margin: 0 0 24px 0;">
-                Thanks for joining <strong>TaskCare360</strong>! You've just unlocked a smarter way
+                Thanks for joining <strong>FitWisely</strong>! You've just unlocked a smarter way
                 to track your fitness, stay productive, and hit your daily goals.
             </p>
 
@@ -1585,7 +1585,7 @@ def build_welcome_email_html(user_name: str, user_email: str) -> str:
                     ⚡ Quick start
                 </p>
                 <p style="color: #475569; font-size: 13px; line-height: 1.6; margin: 0;">
-                    1. Install the TaskCare360 mobile app<br/>
+                    1. Install the FitWisely mobile app<br/>
                     2. Log in with your email: <strong>{user_email}</strong><br/>
                     3. Grant step-tracking permissions<br/>
                     4. Hit your first daily goal! 🎉
@@ -1600,7 +1600,7 @@ def build_welcome_email_html(user_name: str, user_email: str) -> str:
                           border-radius: 12px; font-size: 16px; font-weight: 800;
                           display: inline-block; letter-spacing: 0.4px;
                           box-shadow: 0 6px 20px rgba(78, 204, 163, 0.35);">
-                    Open TaskCare360 →
+                    Open FitWisely →
                 </a>
             </div>
 
@@ -1618,15 +1618,15 @@ def build_welcome_email_html(user_name: str, user_email: str) -> str:
             </p>
             <p style="color: #64748b; font-size: 11px; margin: 0;">
                 Reply to this email or reach us at
-                <a href="mailto:support@taskcare360.com"
-                   style="color: #4ecca3; text-decoration: none;">support@taskcare360.com</a>
+                <a href="mailto:info.fitwisely@gmail.com"
+                   style="color: #4ecca3; text-decoration: none;">info.fitwisely@gmail.com</a>
             </p>
             <hr style="border: none; border-top: 1px solid #1e293b;
                        margin: 16px 0;" />
             <p style="color: #64748b; font-size: 10px; margin: 0;
                       line-height: 1.5;">
-                TaskCare360 — Your Health & Productivity Partner 🚀<br/>
-                You're receiving this because you signed up for TaskCare360.
+                FitWisely — Your Health & Productivity Partner 🚀<br/>
+                You're receiving this because you signed up for FitWisely.
             </p>
         </div>
     </div>
@@ -1652,7 +1652,7 @@ def build_admin_notification_html(user_name: str, user_email: str,
                 New User Registered!
             </h1>
             <p style="color: #94a3b8; font-size: 13px; margin: 6px 0 0 0;">
-                TaskCare360 · Admin Notification
+                FitWisely · Admin Notification
             </p>
         </div>
 
@@ -1720,7 +1720,7 @@ def build_admin_notification_html(user_name: str, user_email: str,
         <div style="background-color: #f1f5f9; padding: 18px 24px;
                     border-radius: 0 0 20px 20px; text-align: center;">
             <p style="color: #64748b; font-size: 11px; margin: 0;">
-                This is an automated notification from TaskCare360.
+                This is an automated notification from FitWisely.
             </p>
         </div>
     </div>
@@ -1733,8 +1733,8 @@ def send_registration_emails(user_name: str, user_email: str,
     Send welcome email to new user + notification to all admins.
     This is fire-and-forget — failures are logged but not raised.
     """
-    sender_email = os.getenv('EMAIL_USER')
-    sender_password = os.getenv('EMAIL_PASS')
+    sender_email = (os.getenv('EMAIL_USER') or '').replace(' ', '')
+    sender_password = (os.getenv('EMAIL_PASS') or '').replace(' ', '')
 
     if not sender_email or not sender_password:
         print("❌ [registration-email] SMTP credentials missing — skipping")
@@ -1749,9 +1749,9 @@ def send_registration_emails(user_name: str, user_email: str,
             # ── 1. Welcome email to USER ──
             try:
                 welcome_msg = MIMEMultipart("alternative")
-                welcome_msg['From'] = f"TaskCare360 <{sender_email}>"
+                welcome_msg['From'] = f"FitWisely <{sender_email}>"
                 welcome_msg['To'] = user_email
-                welcome_msg['Subject'] = f"🎯 Welcome to TaskCare360, {user_name}!"
+                welcome_msg['Subject'] = f"🎯 Welcome to FitWisely, {user_name}!"
                 welcome_msg.attach(
                     MIMEText(build_welcome_email_html(user_name, user_email),
                              'html', 'utf-8')
@@ -1767,7 +1767,7 @@ def send_registration_emails(user_name: str, user_email: str,
                     user_name, user_email, user_id, total_users
                 )
                 admin_msg = MIMEMultipart("alternative")
-                admin_msg['From'] = f"TaskCare360 Alerts <{sender_email}>"
+                admin_msg['From'] = f"FitWisely Alerts <{sender_email}>"
                 admin_msg['To'] = ", ".join(ADMIN_EMAILS)
                 admin_msg['Subject'] = f"🎉 New signup: {user_name} ({user_email})"
                 admin_msg.attach(MIMEText(admin_html, 'html', 'utf-8'))
@@ -2016,8 +2016,8 @@ import traceback   # add this to your imports
 
 def send_otp(email):
     otp = str(random.randint(100000, 999999))
-    sender_email = os.getenv('EMAIL_USER')
-    sender_password = os.getenv('EMAIL_PASS')
+    sender_email = (os.getenv('EMAIL_USER') or '').replace(' ', '')
+    sender_password = (os.getenv('EMAIL_PASS') or '').replace(' ', '')
 
     # 🔎 Sanity-check that credentials are even loaded
     print("=" * 60)
@@ -2032,8 +2032,8 @@ def send_otp(email):
         return None
 
     msg = EmailMessage()
-    msg.set_content(f"Your TaskCare360 OTP is: {otp}\n\nValid for 3 minutes.")
-    msg['Subject'] = "TaskCare360: Password Reset OTP"
+    msg.set_content(f"Your FitWisely OTP is: {otp}\n\nValid for 3 minutes.")
+    msg['Subject'] = "FitWisely: Password Reset OTP"
     msg['From'] = sender_email
     msg['To'] = email
 
@@ -2250,10 +2250,10 @@ def public_stats():
 # ======================
 # INITIALIZATION
 # ======================
-# This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the TaskCare360 app for maximum engagement.
+# This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the FitWisely app for maximum engagement.
 def send_daily_task_reminders():
-    sender_email = os.getenv('EMAIL_USER')
-    sender_password = os.getenv('EMAIL_PASS')
+    sender_email = (os.getenv('EMAIL_USER') or '').replace(' ', '')
+    sender_password = (os.getenv('EMAIL_PASS') or '').replace(' ', '')
     login_url = "https://TaskCare360.pythonanywhere.com/open-app"
 
     # 📋 Tracking lists for the report
@@ -2412,7 +2412,7 @@ def send_daily_task_reminders():
                             </div>
                             <div style="text-align: center; margin-top: 28px;">
                                 <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 14px 36px; text-decoration: none; border-radius: 12px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(78, 204, 163, 0.3); letter-spacing: 0.3px;">
-                                    Open TaskCare 360
+                                    Open FitWisely
                                 </a>
                             </div>
                         </div>
@@ -2441,7 +2441,7 @@ def send_daily_task_reminders():
                             </div>
                             <div style="text-align: center; margin-top: 10px;">
                                 <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 14px 36px; text-decoration: none; border-radius: 12px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(78, 204, 163, 0.3); letter-spacing: 0.3px;">
-                                    Open TaskCare 360
+                                    Open FitWisely
                                 </a>
                             </div>
                         </div>
@@ -2512,7 +2512,7 @@ def send_daily_task_reminders():
 
                         <hr style="margin: 30px 0;">
                         <p style="font-size: 12px; color: #888; text-align: center;">
-                            TaskCare360 — Your health & productivity partner 🚀
+                            FitWisely — Your health & productivity partner 🚀
                         </p>
                     </div>
                     """
