@@ -1299,9 +1299,12 @@ def open_app():
 # AUTH API ENDPOINTS
 # ======================
 
+from flask import render_template  # Make sure this is at the top of your file
+
 @app.route('/', methods=['GET'])
 def default():
-    return jsonify({"message": "Welcome to the TaskCare API, Backend is working successfully!"}), 200
+    # Renders the beautiful HTML page instead of raw JSON
+    return render_template('index.html')
 
 # ============================================
 # ✅ EMAIL VALIDATION FUNCTION

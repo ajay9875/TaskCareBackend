@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FitWisely - Track Smarter. Achieve More.</title>
+    
+    <!-- ✅ THIS LINKS THE FAVICON -->
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    
+    <style>
+        :root {
+            --primary: #1a1a2e;
+            --accent: #4ecca3;
+            --text-light: #a4b0be;
+        }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--primary);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            text-align: center;
+        }
+        .logo {
+            font-size: 48px;
+            font-weight: 800;
+            margin-bottom: 10px;
+        }
+        .logo span {
+            color: var(--accent);
+        }
+        .tagline {
+            font-size: 18px;
+            color: var(--text-light);
+            margin-bottom: 40px;
+        }
+        .btn {
+            background-color: var(--accent);
+            color: var(--primary);
+            padding: 16px 40px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 18px;
+            transition: transform 0.2s;
+            box-shadow: 0 4px 15px rgba(78, 204, 163, 0.4);
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .footer {
+            position: absolute;
+            bottom: 20px;
+            font-size: 12px;
+            color: #64748B;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- If you have the FitWisely logo image, you can uncomment this and put it in the static folder -->
+    <!-- <img src="{{ url_for('static', filename='logo.png') }}" alt="FitWisely" width="120" style="margin-bottom: 20px;"> -->
+
+    <div class="logo">Fit<span>Wisely</span></div>
+    <div class="tagline">Track Smarter. Achieve More.</div>
+
+    <a href="taskcaremobile://dashboard" class="btn">Open Mobile App</a>
+
+    <div class="footer">
+        &copy; 2024 FitWisely. All rights reserved.
+    </div>
+
+    <!-- This script auto-redirects to the app if opened on a mobile phone -->
+    <script>
+        setTimeout(function() {
+            window.location.href = "taskcaremobile://dashboard";
+        }, 1500);
+    </script>
+</body>
+</html>
