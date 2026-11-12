@@ -2633,7 +2633,7 @@ def send_expo_push(tokens, title, body, data_payload=None):
             "body": body,
             "data": data_payload or {"screen": "steps"},
             "priority": "high",
-            "channelId": "default",
+            "channelId": "default-v2",
         })
 
     if not messages:
@@ -2824,7 +2824,7 @@ def send_periodic_step_pushes():
                 "body": body,
                 "data": {"screen": "steps"},
                 "priority": "high",
-                "channelId": "default",
+                "channelId": "default-v2",
             })
             
             # ✅ Map the token to the email so we know who succeeded
