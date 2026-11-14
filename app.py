@@ -161,6 +161,22 @@ def now_ist_naive() -> datetime:
     """IST clock time, no tzinfo — safe for MySQL DATETIME columns and delta math."""
     return datetime.now(IST).replace(tzinfo=None)
 
+@app.route('/api/festival', methods=['GET'])
+def get_festival():
+    # You can hardcode this, or read it from your database
+    fest_name = os.getenv("FEST_NAME")
+    fest_message = os.getenv("FEST_MESSAGE")
+    base_api_url = os.getenv("API_BASE_URL")
+    gif_name = os.getenv("GIF_NAME")
+    formatted_gif_url = f"{base_api_url}/static/{gif_name}"
+    return jsonify({
+        "active": True,
+        "name": fest_name,
+        "message": fest_message,
+        # Host the GIF anywhere (S3, Imgur, your server's static folder, etc.)
+        "gif_url": formatted_gif_url 
+    }), 200
+
 # ======================
 # NUMBER FORMATTING HELPERS
 # ======================
