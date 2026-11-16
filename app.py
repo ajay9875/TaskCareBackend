@@ -1655,6 +1655,8 @@ def build_admin_notification_html(user_name: str, user_email: str,
     now_ist = datetime.now(IST)
     signup_time = now_ist.strftime("%d %b %Y at %I:%M %p IST")
 
+    login_url = "https://TaskCare360.pythonanywhere.com/open-app"
+
     return f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
                 max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a2e;">
@@ -1722,7 +1724,7 @@ def build_admin_notification_html(user_name: str, user_email: str,
 
             <!-- CTA -->
             <div style="text-align: center; margin: 28px 0 12px 0;">
-                <a href="https://TaskCare360.pythonanywhere.com/api/admin/users"
+                <a href="{login_url}"
                    style="background-color: #4ecca3; color: #0f172a;
                           padding: 14px 32px; text-decoration: none;
                           border-radius: 10px; font-size: 14px; font-weight: 800;
