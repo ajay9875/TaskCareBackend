@@ -2268,7 +2268,7 @@ def public_stats():
 # INITIALIZATION
 # ======================
 # This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the FitWisely app for maximum engagement.
-def send_daily_task_reminders():
+def send_daily_progress_report():
     sender_email = (os.getenv('EMAIL_USER') or '').replace(' ', '')
     sender_password = (os.getenv('EMAIL_PASS') or '').replace(' ', '')
     login_url = "https://TaskCare360.pythonanywhere.com/open-app"
@@ -2589,7 +2589,7 @@ def send_daily_task_reminders():
 def send_daily_email():
     print("🚀 Manual trigger: Executing email sequence...")
     try:
-        result = send_daily_task_reminders()
+        result = send_daily_progress_report()
 
         # If the function itself reported a hard failure (creds missing / fatal error)
         if result.get("error"):
