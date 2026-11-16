@@ -2542,7 +2542,7 @@ def send_daily_task_reminders():
 
                     # Send email out to active user mailbox
                     msg = MIMEMultipart("alternative")
-                    msg['From'] = sender_email
+                    msg['From'] = f"FitWisely Progress <{sender_email}>"
                     msg['To'] = user.email
                     msg['Subject'] = subject
                     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
