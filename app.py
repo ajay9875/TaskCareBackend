@@ -55,9 +55,9 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='None',
-    PERMANENT_SESSION_LIFETIME=timedelta(days=210)   # ← uncomment + set to 210
+    PERMANENT_SESSION_LIFETIME=timedelta(days=400)   # 👈 Maximum browser limit
 )
- 
+
 db = SQLAlchemy(app)
 
 migrate = Migrate(app, db)  # 🚀 Initialize Migrate with your app and db
@@ -1673,7 +1673,7 @@ def build_admin_notification_html(user_name: str, user_email: str,
         </div>
 
         <!-- Body -->
-        <div style="background-color: #ffffff; padding: 28px 24px;
+        <div style="background-color: #ffffff; padding: 28px 20px;
                     border: 1px solid #e2e8f0; border-top: none;">
             
             <p style="color: #475569; font-size: 14px; line-height: 1.6;
@@ -1683,32 +1683,32 @@ def build_admin_notification_html(user_name: str, user_email: str,
 
             <!-- User details card -->
             <div style="background-color: #f8fafc; border-radius: 16px;
-                        padding: 20px; border: 1px solid #e2e8f0;
+                        padding: 16px; border: 1px solid #e2e8f0;
                         margin-bottom: 20px;">
                 <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
                     <tr>
                         <td style="padding: 8px 0; color: #64748b; font-size: 13px;
-                                   font-weight: 600; width: 130px;">👤 Name</td>
+                                   font-weight: 600; width: 90px; white-space: nowrap;">👤 Name</td>
                         <td style="padding: 8px 0; color: #0f172a; font-size: 14px;
                                    font-weight: 700;">{user_name}</td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 0; color: #64748b; font-size: 13px;
-                                   font-weight: 600; border-top: 1px solid #e2e8f0;">📧 Email</td>
+                                   font-weight: 600; border-top: 1px solid #e2e8f0; white-space: nowrap;">📧 Email</td>
                         <td style="padding: 8px 0; color: #0f172a; font-size: 14px;
-                                   font-weight: 700; border-top: 1px solid #e2e8f0;">{user_email}</td>
+                                   font-weight: 700; border-top: 1px solid #e2e8f0; word-break: break-all;">{user_email}</td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 0; color: #64748b; font-size: 13px;
-                                   font-weight: 600; border-top: 1px solid #e2e8f0;">🆔 User ID</td>
+                                   font-weight: 600; border-top: 1px solid #e2e8f0; white-space: nowrap;">🆔 User ID</td>
                         <td style="padding: 8px 0; color: #0f172a; font-size: 14px;
                                    font-weight: 700; border-top: 1px solid #e2e8f0;">#{user_id}</td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 0; color: #64748b; font-size: 13px;
-                                   font-weight: 600; border-top: 1px solid #e2e8f0;">🕐 Registered</td>
+                                   font-weight: 600; border-top: 1px solid #e2e8f0; white-space: nowrap;">🕐 Registered</td>
                         <td style="padding: 8px 0; color: #0f172a; font-size: 14px;
-                                   font-weight: 700; border-top: 1px solid #e2e8f0;">{signup_time}</td>
+                                   font-weight: 700; border-top: 1px solid #e2e8f0; white-space: nowrap;">{signup_time}</td>
                     </tr>
                 </table>
             </div>
@@ -1723,9 +1723,9 @@ def build_admin_notification_html(user_name: str, user_email: str,
             <!-- CTA -->
             <div style="text-align: center; margin: 28px 0 12px 0;">
                 <a href="https://TaskCare360.pythonanywhere.com/api/admin/users"
-                   style="background-color: #0f172a; color: #ffffff;
+                   style="background-color: #4ecca3; color: #0f172a;
                           padding: 14px 32px; text-decoration: none;
-                          border-radius: 10px; font-size: 14px; font-weight: 700;
+                          border-radius: 10px; font-size: 14px; font-weight: 800;
                           display: inline-block; letter-spacing: 0.3px;">
                     View in Admin Panel →
                 </a>
@@ -1741,7 +1741,6 @@ def build_admin_notification_html(user_name: str, user_email: str,
         </div>
     </div>
     """
-
 
 def send_registration_emails(user_name: str, user_email: str,
                               user_id: int, total_users: int):
