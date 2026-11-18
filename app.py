@@ -400,7 +400,7 @@ def get_my_team():
                 "role": m.role,
                 "steps_today": steps,
                 "is_signed_in": user.is_signed_in,
-                "last_seen": user.last_seen.isoformat() if user.last_seen else None,
+                "last_seen": (user.last_seen.isoformat() + "+05:30") if user.last_seen else None,
             })
             
         teams_data.append({
