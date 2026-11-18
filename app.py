@@ -305,13 +305,12 @@ def superadmin_list_teams():
 
     teams = Team.query.order_by(Team.id.desc()).all()
     out = []
-    now = datetime.utcnow()
+    now = now_ist_naive()                    # ✅ IST, matches everywhere else
+    ONLINE_WINDOW = timedelta(minutes=15)
 
     for t in teams:
-        # Get admin name
         admin = User.query.get(t.created_by)
-        
-        # Calculate age
+
         delta = now - t.created_at
         if delta.days > 0:
             age = f"{delta.days}d ago"
@@ -320,13 +319,27 @@ def superadmin_list_teams():
         else:
             age = f"{delta.seconds // 60}m ago"
 
+        # ✅ NEW: aggregate per-team online / signed-in counts
+        online_count = 0
+        signed_in_count = 0
+        for m in t.members:
+            u = User.query.get(m.user_id)
+            if not u:
+                continue
+            if u.is_signed_in:
+                signed_in_count += 1
+            if u.last_seen and (now - u.last_seen) <= ONLINE_WINDOW:
+                online_count += 1
+
         out.append({
             "id": t.id,
             "name": t.name,
             "join_code": t.join_code,
             "created_by": admin.name if admin else "Unknown",
             "created_at_label": age,
-            "member_count": len(t.members)
+            "member_count": len(t.members),
+            "online_member_count": online_count,           # ✅ NEW
+            "signed_in_member_count": signed_in_count,     # ✅ NEW
         })
     return jsonify({"status": "success", "teams": out}), 200
 
@@ -735,14 +748,49 @@ def superadmin_get_team(team_id):
     if not team:
         return jsonify({"error": "Team not found"}), 404
 
+    now = now_ist_naive()
+    ONLINE_WINDOW = timedelta(minutes=15)
     members_data = []
+
     for m in team.members:
         u = User.query.get(m.user_id)
+        if not u:
+            continue
+
+        # ✅ derive status, same logic as admin users list
+        if not u.last_seen:
+            state, label = "never", "Not active yet"
+        elif u.is_signed_in is False and u.last_status_change:
+            cd = now - u.last_status_change
+            if cd <= ONLINE_WINDOW:
+                state, label = "signed_out", f"Signed out · {_humanize(cd)} ago"
+            else:
+                delta = now - u.last_seen
+                state = "online" if delta <= ONLINE_WINDOW else "offline"
+                label = (
+                    "Signed in · Active now" if state == "online"
+                    else f"Last seen {_humanize(delta)} ago"
+                )
+        else:
+            delta = now - u.last_seen
+            state = "online" if delta <= ONLINE_WINDOW else "offline"
+            label = (
+                "Signed in · Active now" if state == "online"
+                else f"Last seen {_humanize(delta)} ago"
+            )
+
         members_data.append({
             "user_id": u.id,
             "name": u.name,
             "email": u.email,
-            "role": m.role
+            "role": m.role,
+            "state": state,
+            "label": label,
+            "is_signed_in": bool(u.is_signed_in),
+            "last_seen": u.last_seen.isoformat() if u.last_seen else None,
+            "last_status_change": (
+                u.last_status_change.isoformat() if u.last_status_change else None
+            ),
         })
 
     return jsonify({
@@ -751,8 +799,8 @@ def superadmin_get_team(team_id):
             "id": team.id,
             "name": team.name,
             "join_code": team.join_code,
-            "members": members_data
-        }
+            "members": members_data,
+        },
     }), 200
 
 @app.route('/api/admin/users', methods=['GET'])
