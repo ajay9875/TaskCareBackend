@@ -479,7 +479,7 @@ def _build_user_history_payload(target_user: User):
         delta = now - target_user.last_seen
         if delta <= ONLINE_WINDOW:
             status_state = "online"
-            status_label = "Signed in · Active now"
+            status_label = "Active now"
         else:
             status_state = "offline"
             status_label = f"Last seen {_humanize(delta)} ago"
@@ -768,14 +768,14 @@ def superadmin_get_team(team_id):
                 delta = now - u.last_seen
                 state = "online" if delta <= ONLINE_WINDOW else "offline"
                 label = (
-                    "Signed in · Active now" if state == "online"
+                    "Active now" if state == "online"
                     else f"Last seen {_humanize(delta)} ago"
                 )
         else:
             delta = now - u.last_seen
             state = "online" if delta <= ONLINE_WINDOW else "offline"
             label = (
-                "Signed in · Active now" if state == "online"
+                "Active now" if state == "online"
                 else f"Last seen {_humanize(delta)} ago"
             )
 
@@ -824,7 +824,7 @@ def admin_list_users():
                 return ("signed_out", f"Signed out · {_humanize(change_delta)} ago")
         delta = now - u.last_seen
         if delta <= ONLINE_WINDOW:
-            return ("online", "Signed in · Active now")
+            return ("online", "Active now")
         return ("offline", f"Last seen {_humanize(delta)} ago")
 
     users = User.query.order_by(User.id.asc()).all()
@@ -881,7 +881,7 @@ def admin_user_history(user_id):
         delta = now - target_user.last_seen
         if delta <= ONLINE_WINDOW:
             status_state = "online"
-            status_label = "Signed in · Active now"
+            status_label = "Active now"
         else:
             status_state = "offline"
             status_label = f"Last seen {_humanize(delta)} ago"
