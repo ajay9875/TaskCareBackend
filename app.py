@@ -1847,31 +1847,79 @@ def send_registration_emails(user_name: str, user_email: str,
     except Exception as e:
         print(f"❌ [registration-email] Unexpected error: {e}")
 
+
+def verify_recaptcha(token):
+    if not token:
+        return False
+
+    secret_key = os.getenv("RECAPTCHA_V2_SECRET_KEY") # Get this from the v2 Admin Console
+    
+    if not secret_key:
+        print("Missing reCAPTCHA v2 Secret Key")
+        return False
+
+    # Standard v2 verification endpoint
+    url = "https://www.google.com/recaptcha/api/siteverify"
+    
+    try:
+        response = requests.post(
+            url,
+            data={
+                "secret": secret_key,
+                "response": token
+            },
+            timeout=10
+        )
+        
+        result = response.json()
+        # v2 returns "success": true/false
+        return result.get("success", False)
+
+    except Exception as e:
+        print(f"reCAPTCHA verification error: {e}")
+        return False
+
 @app.route('/api/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    user = User.query.filter_by(email=data.get('email', '').lower()).first()
+    data = request.get_json(silent=True) or {}
+
+    # Verify CAPTCHA before checking credentials
+    captcha_token = data.get("captcha_token")
+
+    if not verify_recaptcha(captcha_token):
+        return jsonify({
+            "status": "error",
+            "message": "CAPTCHA verification failed. Please try again."
+        }), 403
+
+    user = User.query.filter_by(
+        email=data.get('email', '').lower()
+    ).first()
 
     if user and check_password_hash(user.password, data.get('password')):
-        session.clear() # Clear any old/broken sessions
-        session.modified = True           # ← add this BEFORE setting values
+        session.clear()
+        session.modified = True
         session['user_id'] = user.id
-        session['username'] = user.name # Add this so dashboard doesn't show 'None'
+        session['username'] = user.name
         session.permanent = True
 
-        # 👇 ADD THESE LINES
         user.is_signed_in = True
-        user.last_status_change = now_ist_naive()   # ← IST
-        user.last_seen = now_ist_naive()             # ← IST
+        user.last_status_change = now_ist_naive()
+        user.last_seen = now_ist_naive()
         db.session.commit()
 
         return jsonify({
             "status": "success",
             "user": {"id": user.id, "name": user.name},
-            "step_sync_token": sync_token_serializer.dumps({"user_id": user.id}),
+            "step_sync_token": sync_token_serializer.dumps({
+                "user_id": user.id
+            }),
         }), 200
 
-    return jsonify({"status": "error", "message": "Invalid email or password"}), 401
+    return jsonify({
+        "status": "error",
+        "message": "Invalid email or password"
+    }), 401
 
 # Dashboard route for testing session persistence
 @app.route('/api/dashboard', methods=['GET'])
