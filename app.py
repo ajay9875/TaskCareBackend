@@ -858,6 +858,51 @@ def admin_list_users():
                     "server_now": now.isoformat() + "+05:30", 
                     "users": out}), 200
 
+@app.route('/api/admin/users/<int:user_id>/reset-password', methods=['POST'])
+def admin_reset_user_password(user_id):
+
+    # Verify logged-in admin
+    if 'user_id' not in session:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+    current = User.query.get(session['user_id'])
+
+    if not _is_admin(current):
+        return jsonify({"status": "error", "message": "Access denied"}), 403
+
+    data = request.get_json(silent=True) or {}
+    new_password = data.get('password', '').strip()
+
+    if len(new_password) < 6:
+        return jsonify({
+            "status": "error",
+            "message": "Password must contain at least 6 characters."
+        }), 400
+
+    target_user = User.query.get(user_id)
+
+    if not target_user:
+        return jsonify({"status": "error", "message": "User not found"}), 404
+
+    try:
+        target_user.password = generate_password_hash(new_password)
+
+        db.session.commit()
+
+        return jsonify({
+            "status": "success",
+            "message": "User password reset successfully."
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"Admin password reset error: {e}")
+
+        return jsonify({
+            "status": "error",
+            "message": "Unable to reset password."
+        }), 500
+
 """@app.route('/api/admin/users/<int:user_id>/history', methods=['GET'])
 def admin_user_history(user_id):
     if 'user_id' not in session:
