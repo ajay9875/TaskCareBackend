@@ -943,6 +943,28 @@ def admin_list_users():
         return ("offline", f"Last seen {_humanize(delta)} ago")
 
     users = User.query.order_by(User.id.asc()).all()
+
+    # Get today's date in IST
+    today = datetime.now(IST).date()
+
+    # Fetch today's step logs for all users in one query
+    user_ids = [u.id for u in users]
+
+    today_logs = StepLog.query.filter(
+        StepLog.user_id.in_(user_ids),
+        StepLog.date == today
+    ).all() if user_ids else []
+
+    # Aggregate walking + treadmill steps for each user
+    steps_by_user = {}
+
+    for log in today_logs:
+        steps_by_user[log.user_id] = (
+            steps_by_user.get(log.user_id, 0)
+            + (log.walking_steps or 0)
+            + (log.treadmill_steps or 0)
+        )
+
     out = []
     for u in users:
         state, label = _derive(u)
@@ -966,7 +988,8 @@ def admin_list_users():
             "last_seen": u.last_seen.isoformat() if u.last_seen else None,
             "state": state,
             "label": label,
-            "created_at_label": created_label  # 👈 ADD THIS
+            "created_at_label": created_label,
+            "steps_today": steps_by_user.get(u.id, 0)
         })
 
     return jsonify({"status": "success", 
