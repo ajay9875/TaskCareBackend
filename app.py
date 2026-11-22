@@ -760,6 +760,7 @@ ADMIN_EMAILS = {
 def _is_admin(user) -> bool:
     return bool(user and user.email and user.email.lower() in ADMIN_EMAILS)
 
+
 @app.route('/api/superadmin/teams/<int:team_id>', methods=['GET'])
 def superadmin_get_team(team_id):
     if 'user_id' not in session or not session.get('super_admin_access'):
@@ -770,58 +771,147 @@ def superadmin_get_team(team_id):
         return jsonify({"error": "Team not found"}), 404
 
     now = now_ist_naive()
+    today = datetime.now(IST).date()
+
     ONLINE_WINDOW = timedelta(minutes=15)
+
     members_data = []
 
+    # ----------------------------------
+    # FETCH TODAY'S STEP LOGS IN ONE QUERY
+    # ----------------------------------
+
+    member_ids = [m.user_id for m in team.members]
+
+    today_logs = StepLog.query.filter(
+        StepLog.user_id.in_(member_ids),
+        StepLog.date == today
+    ).all()
+
+    # Map today's steps by user ID
+    steps_by_user = {}
+
+    for log in today_logs:
+        steps_by_user[log.user_id] = (
+            steps_by_user.get(log.user_id, 0)
+            + (log.walking_steps or 0)
+            + (log.treadmill_steps or 0)
+        )
+
+    # ----------------------------------
+    # BUILD TEAM MEMBERS
+    # ----------------------------------
+
     for m in team.members:
+
         u = User.query.get(m.user_id)
+
         if not u:
             continue
 
-        # ✅ derive status, same logic as admin users list
+        # Today's combined steps
+        steps_today = steps_by_user.get(u.id, 0)
+
+        # ----------------------------------
+        # DERIVE USER STATUS
+        # ----------------------------------
+
         if not u.last_seen:
+
             state, label = "never", "Not active yet"
+
         elif u.is_signed_in is False and u.last_status_change:
+
             cd = now - u.last_status_change
+
             if cd <= ONLINE_WINDOW:
-                state, label = "signed_out", f"Signed out · {_humanize(cd)} ago"
+
+                state = "signed_out"
+                label = f"Signed out · {_humanize(cd)} ago"
+
             else:
+
                 delta = now - u.last_seen
-                state = "online" if delta <= ONLINE_WINDOW else "offline"
+
+                state = (
+                    "online"
+                    if delta <= ONLINE_WINDOW
+                    else "offline"
+                )
+
                 label = (
-                    "Active now" if state == "online"
+                    "Active now"
+                    if state == "online"
                     else f"Last seen {_humanize(delta)} ago"
                 )
+
         else:
+
             delta = now - u.last_seen
-            state = "online" if delta <= ONLINE_WINDOW else "offline"
+
+            state = (
+                "online"
+                if delta <= ONLINE_WINDOW
+                else "offline"
+            )
+
             label = (
-                "Active now" if state == "online"
+                "Active now"
+                if state == "online"
                 else f"Last seen {_humanize(delta)} ago"
             )
 
+        # ----------------------------------
+        # MEMBER RESPONSE
+        # ----------------------------------
+
         members_data.append({
+
             "user_id": u.id,
             "name": u.name,
             "email": u.email,
+
             "role": m.role,
+
+            # NEW: Leaderboard steps
+            "steps_today": steps_today,
+
+            # Existing status information
             "state": state,
             "label": label,
+
             "is_signed_in": bool(u.is_signed_in),
-            "last_seen": u.last_seen.isoformat() if u.last_seen else None,
-            "last_status_change": (
-                u.last_status_change.isoformat() if u.last_status_change else None
+
+            "last_seen": (
+                u.last_seen.isoformat()
+                if u.last_seen else None
             ),
+
+            "last_status_change": (
+                u.last_status_change.isoformat()
+                if u.last_status_change else None
+            ),
+
         })
 
+    # ----------------------------------
+    # FINAL RESPONSE
+    # ----------------------------------
+
     return jsonify({
+
         "status": "success",
+
         "team": {
+
             "id": team.id,
             "name": team.name,
             "join_code": team.join_code,
+
             "members": members_data,
+
         },
+
     }), 200
 
 @app.route('/api/admin/users', methods=['GET'])
