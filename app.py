@@ -305,8 +305,9 @@ def superadmin_list_teams():
 
     teams = Team.query.order_by(Team.id.desc()).all()
     out = []
-    now = now_ist_naive()                    # ✅ IST, matches everywhere else
+    now = now_ist_naive()                    
     ONLINE_WINDOW = timedelta(minutes=15)
+    current_user_id = session['user_id']
 
     for t in teams:
         admin = User.query.get(t.created_by)
@@ -319,17 +320,32 @@ def superadmin_list_teams():
         else:
             age = f"{delta.seconds // 60}m ago"
 
-        # ✅ NEW: aggregate per-team online / signed-in counts
+        members_data = []
         online_count = 0
         signed_in_count = 0
+        is_admin_flag = False
+
         for m in t.members:
             u = User.query.get(m.user_id)
             if not u:
                 continue
+            
+            # Build the members array so the frontend can de-dupe properly
+            members_data.append({
+                "user_id": u.id,
+                "name": u.name,
+                "role": m.role,
+                "is_signed_in": u.is_signed_in,
+                "last_seen": u.last_seen.isoformat() if u.last_seen else None,
+            })
+
             if u.is_signed_in:
                 signed_in_count += 1
             if u.last_seen and (now - u.last_seen) <= ONLINE_WINDOW:
                 online_count += 1
+                
+            if u.id == current_user_id and m.role == 'admin':
+                is_admin_flag = True
 
         out.append({
             "id": t.id,
@@ -338,8 +354,10 @@ def superadmin_list_teams():
             "created_by": admin.name if admin else "Unknown",
             "created_at_label": age,
             "member_count": len(t.members),
-            "online_member_count": online_count,           # ✅ NEW
-            "signed_in_member_count": signed_in_count,     # ✅ NEW
+            "online_member_count": online_count,           
+            "signed_in_member_count": signed_in_count,     
+            "is_admin": is_admin_flag, # ✅ Added this
+            "members": members_data,   # ✅ Added this so stats calculate correctly
         })
     return jsonify({"status": "success", "teams": out}), 200
 
@@ -472,7 +490,15 @@ def _build_user_history_payload(target_user: User):
     now = now_ist_naive()
     ONLINE_WINDOW = timedelta(minutes=15)
 
-    if not target_user.last_seen:
+    # ✅ LOGIC FIX: Check is_signed_in FIRST
+    if target_user.is_signed_in is False:
+        if target_user.last_status_change:
+            status_state = "signed_out"
+            status_label = f"Signed out · {_humanize(now - target_user.last_status_change)} ago"
+        else:
+            status_state = "offline"
+            status_label = "Offline"
+    elif not target_user.last_seen:
         status_state = "never"
         status_label = "Not active yet"
     else:
@@ -483,11 +509,6 @@ def _build_user_history_payload(target_user: User):
         else:
             status_state = "offline"
             status_label = f"Last seen {_humanize(delta)} ago"
-
-    if target_user.is_signed_in is False and target_user.last_status_change:
-        if (now - target_user.last_status_change) <= ONLINE_WINDOW:
-            status_state = "offline"
-            status_label = f"Signed out · {_humanize(now - target_user.last_status_change)} ago"
 
     today = datetime.now(IST).date()
     existing_logs = StepLog.query.filter_by(user_id=target_user.id).all()
@@ -816,12 +837,16 @@ def admin_list_users():
     ONLINE_WINDOW = timedelta(minutes=15)
 
     def _derive(u):
+        # ✅ Check if they explicitly logged out first
+        if u.is_signed_in is False:
+            if u.last_status_change:
+                change_delta = now - u.last_status_change
+                return ("signed_out", f"Signed out · {_humanize(change_delta)} ago")
+            return ("signed_out", "Offline")
+            
         if not u.last_seen:
             return ("never", "Not active yet")
-        if u.is_signed_in is False and u.last_status_change:
-            change_delta = now - u.last_status_change
-            if change_delta <= ONLINE_WINDOW:
-                return ("signed_out", f"Signed out · {_humanize(change_delta)} ago")
+            
         delta = now - u.last_seen
         if delta <= ONLINE_WINDOW:
             return ("online", "Active now")
@@ -2060,13 +2085,19 @@ def update_profile():
 
 @app.route('/api/logout', methods=['GET', 'POST'])
 def logout():
-    # 👇 GET USER BEFORE CLEARING SESSION
     user_id = session.get('user_id')
     if user_id:
         user = User.query.get(user_id)
         if user:
+            # ✅ FORCE OFFLINE STATUS
             user.is_signed_in = False
-            user.last_status_change = now_ist_naive()   # ← IST
+            
+            # Update last_status_change so the UI shows "Signed out X ago"
+            user.last_status_change = now_ist_naive() 
+            
+            # ⚠️ CRITICAL: We DO NOT update last_seen here. 
+            # If we do, the system might think they are "Active now".
+            
             db.session.commit()
 
     session.clear()
