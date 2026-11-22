@@ -989,7 +989,8 @@ def admin_list_users():
             "state": state,
             "label": label,
             "created_at_label": created_label,
-            "steps_today": steps_by_user.get(u.id, 0)
+            "steps_today": steps_by_user.get(u.id, 0),
+            "is_admin": _is_admin(u)
         })
 
     return jsonify({"status": "success", 
