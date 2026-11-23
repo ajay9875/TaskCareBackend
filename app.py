@@ -487,9 +487,13 @@ def post_team_message(team_id):
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
+    sender_id = session['user_id']
+
     membership = TeamMember.query.filter_by(
-        user_id=session['user_id'], team_id=team_id
+        user_id=sender_id,
+        team_id=team_id
     ).first()
+
     if not membership:
         return jsonify({"error": "You are not in this team"}), 403
 
@@ -498,19 +502,62 @@ def post_team_message(team_id):
 
     if not body:
         return jsonify({"error": "Message cannot be empty"}), 400
+
     if len(body) > 1000:
         return jsonify({"error": "Message too long (max 1000 chars)"}), 400
 
     try:
         msg = TeamMessage(
             team_id=team_id,
-            user_id=session['user_id'],
+            user_id=sender_id,
             body=body,
         )
+
         db.session.add(msg)
         db.session.commit()
 
-        u = User.query.get(session['user_id'])
+        u = User.query.get(sender_id)
+
+        # -----------------------------------------
+        # SEND PUSH NOTIFICATIONS TO OTHER MEMBERS
+        # -----------------------------------------
+
+        try:
+            # Get all team members except the sender
+            team_members = TeamMember.query.filter(
+                TeamMember.team_id == team_id,
+                TeamMember.user_id != sender_id
+            ).all()
+
+            recipient_ids = [member.user_id for member in team_members]
+
+            # Get Expo push tokens of those members
+            recipient_tokens = [
+                token.token
+                for token in PushToken.query.filter(
+                    PushToken.user_id.in_(recipient_ids)
+                ).all()
+            ] if recipient_ids else []
+
+            sender_name = u.name if u else "A team member"
+            team = Team.query.get(team_id)
+
+            if recipient_tokens:
+                send_expo_push(
+                    recipient_tokens,
+                    title=f"{team.name if team else 'Team'} · {sender_name}",
+                    body=body[:150],
+                    data_payload={
+                        "screen": "team-chat",
+                        "team_id": team_id,
+                        "message_id": msg.id,
+                    }
+                )
+
+        except Exception as push_error:
+            # A notification failure must not undo the saved message
+            print(f"❌ Team chat push notification failed: {push_error}")
+
         return jsonify({
             "status": "success",
             "message": {
@@ -521,11 +568,15 @@ def post_team_message(team_id):
                 "created_at": msg.created_at.isoformat() + "+00:00",
             },
         }), 201
+
     except Exception as e:
         db.session.rollback()
         print(f"❌ Post team message failed: {e}")
-        return jsonify({"status": "error", "message": "Send failed"}), 500
-
+        return jsonify({
+            "status": "error",
+            "message": "Send failed"
+        }), 500
+    
 @app.route('/join-team')
 def join_team_redirect():
     code = request.args.get('code', '').strip().upper()
@@ -1777,8 +1828,11 @@ def register_push_token():
     try:
         user_id = session['user_id']
         
-        # ✅ FIX: Delete ALL old tokens for this user before adding the new one
-        PushToken.query.filter_by(user_id=user_id).delete()
+        # Delete this user's old tokens AND any row that already holds this
+        # token (e.g. another user previously logged in on this phone)
+        PushToken.query.filter(
+            (PushToken.user_id == user_id) | (PushToken.token == token)
+        ).delete(synchronize_session=False)
         
         # Add the brand new token
         db.session.add(PushToken(
@@ -2465,13 +2519,13 @@ def logout():
         if user:
             # ✅ FORCE OFFLINE STATUS
             user.is_signed_in = False
-            
+
             # Update last_status_change so the UI shows "Signed out X ago"
-            user.last_status_change = now_ist_naive() 
-            
-            # ⚠️ CRITICAL: We DO NOT update last_seen here. 
-            # If we do, the system might think they are "Active now".
-            
+            user.last_status_change = now_ist_naive()
+
+            # Stop pushes to this phone after logout
+            PushToken.query.filter_by(user_id=user.id).delete()
+
             db.session.commit()
 
     session.clear()
