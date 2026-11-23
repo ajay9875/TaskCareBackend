@@ -494,9 +494,38 @@ def _serialize_messages(msgs):
         })
     return out
 
+# In-memory typing state: { team_id: { user_id: (name, expiry_timestamp) } }
+TEAM_TYPING_STATE = {}
+TYPING_TTL_SECONDS = 5.0
+
+@app.route('/api/teams/<int:team_id>/typing', methods=['POST'])
+def set_team_typing(team_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    membership = TeamMember.query.filter_by(
+        team_id=team_id, user_id=session['user_id']
+    ).first()
+    if not membership:
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    is_typing = bool(data.get('is_typing'))
+    user = User.query.get(session['user_id'])
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    bucket = TEAM_TYPING_STATE.setdefault(team_id, {})
+    if is_typing:
+        bucket[user.id] = (user.name, time.time() + TYPING_TTL_SECONDS)
+    else:
+        bucket.pop(user.id, None)
+
+    return jsonify({"status": "success"}), 200
+
 @app.route('/api/teams/<int:team_id>/messages', methods=['GET'])
 def get_team_messages(team_id):
-    """Poll every 5s. Returns messages after `since` (id) if given."""
+    """Poll every 3s. Returns messages after `since` (id) if given, plus active typers."""
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -514,12 +543,27 @@ def get_team_messages(team_id):
         q = q.filter(TeamMessage.id > since_id)
 
     msgs = q.order_by(TeamMessage.id.asc()).limit(200).all()
-
     out = _serialize_messages(msgs)
+
+    # Collect & prune expired typing indicators
+    now_ts = time.time()
+    bucket = TEAM_TYPING_STATE.get(team_id, {})
+    typing_users = []
+    expired_ids = []
+
+    for uid, (uname, exp) in bucket.items():
+        if exp > now_ts:
+            typing_users.append({"user_id": uid, "name": uname})
+        else:
+            expired_ids.append(uid)
+
+    for uid in expired_ids:
+        bucket.pop(uid, None)
 
     return jsonify({
         "status": "success",
         "messages": out,
+        "typing_users": typing_users,
         "server_now": now_ist_naive().isoformat() + "+05:30",
     }), 200
 
@@ -582,6 +626,9 @@ def post_team_message(team_id):
 
         db.session.add(msg)
         db.session.commit()
+
+        # ✅ Clear sender's typing status immediately once the message is saved
+        TEAM_TYPING_STATE.get(team_id, {}).pop(sender_id, None)
 
         u = User.query.get(sender_id)
 
