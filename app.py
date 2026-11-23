@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import time
 import threading
 import requests
+import json
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -96,6 +97,8 @@ class TeamMessage(db.Model):
     team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
     body = db.Column(db.Text, nullable=False)
+    reply_to_id = db.Column(db.Integer, nullable=True, index=True)   # plain int, no FK
+    mentions = db.Column(db.Text, nullable=True)                      # JSON list of user ids
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 class PushToken(db.Model):
@@ -381,6 +384,7 @@ def superadmin_delete_team(team_id):
     try:
         # Cascade: remove memberships, then the team itself.
         TeamMember.query.filter_by(team_id=team.id).delete()
+        TeamMessage.query.filter_by(team_id=team.id).delete()
         db.session.delete(team)
         db.session.commit()
         return jsonify({
@@ -443,6 +447,53 @@ def get_my_team():
 from urllib.parse import quote  # add at top of file
 
 # ── TEAM CHAT ──────────────────────────────────────────────
+
+def _serialize_messages(msgs):
+    if not msgs:
+        return []
+
+    reply_ids = {m.reply_to_id for m in msgs if m.reply_to_id}
+    replies = {}
+    if reply_ids:
+        replies = {r.id: r for r in TeamMessage.query.filter(TeamMessage.id.in_(reply_ids)).all()}
+
+    parsed, user_ids = {}, set()
+    for m in msgs:
+        try:
+            ids = json.loads(m.mentions) if m.mentions else []
+        except (ValueError, TypeError):
+            ids = []
+        parsed[m.id] = ids
+        user_ids.add(m.user_id)
+        user_ids.update(ids)
+    user_ids.update(r.user_id for r in replies.values())
+
+    users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()}
+
+    out = []
+    for m in msgs:
+        u = users.get(m.user_id)
+        r = replies.get(m.reply_to_id)
+        ru = users.get(r.user_id) if r else None
+        out.append({
+            "id": m.id,
+            "user_id": m.user_id,
+            "name": u.name if u else "Unknown",
+            "body": m.body,
+            "created_at": m.created_at.isoformat() + "+00:00",
+            "reply_to": {
+                "id": r.id,
+                "user_id": r.user_id,
+                "name": ru.name if ru else "Unknown",
+                "body": r.body[:120],
+            } if r else None,
+            "mentions": [
+                {"user_id": i, "name": users[i].name}
+                for i in parsed[m.id] if i in users
+            ],
+        })
+    return out
+
 @app.route('/api/teams/<int:team_id>/messages', methods=['GET'])
 def get_team_messages(team_id):
     """Poll every 5s. Returns messages after `since` (id) if given."""
@@ -464,16 +515,7 @@ def get_team_messages(team_id):
 
     msgs = q.order_by(TeamMessage.id.asc()).limit(200).all()
 
-    out = []
-    for m in msgs:
-        u = User.query.get(m.user_id)
-        out.append({
-            "id": m.id,
-            "user_id": m.user_id,
-            "name": u.name if u else "Unknown",
-            "body": m.body,
-            "created_at": m.created_at.isoformat() + "+00:00",
-        })
+    out = _serialize_messages(msgs)
 
     return jsonify({
         "status": "success",
@@ -506,11 +548,36 @@ def post_team_message(team_id):
     if len(body) > 1000:
         return jsonify({"error": "Message too long (max 1000 chars)"}), 400
 
+    # ── Reply target (must be in the same team) ──
+    reply_to_id = data.get('reply_to_id')
+    if reply_to_id is not None:
+        try:
+            reply_to_id = int(reply_to_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid reply target"}), 400
+        if not TeamMessage.query.filter_by(id=reply_to_id, team_id=team_id).first():
+            return jsonify({"error": "Reply target not found"}), 400
+
+    # ── Mentions (only real members of this team, never the sender) ──
+    mention_ids = []
+    raw_mentions = data.get('mentions') or []
+    if isinstance(raw_mentions, list):
+        member_ids = {m.user_id for m in TeamMember.query.filter_by(team_id=team_id).all()}
+        for x in raw_mentions:
+            try:
+                i = int(x)
+            except (TypeError, ValueError):
+                continue
+            if i in member_ids and i != sender_id and i not in mention_ids:
+                mention_ids.append(i)
+
     try:
         msg = TeamMessage(
             team_id=team_id,
             user_id=sender_id,
             body=body,
+            reply_to_id=reply_to_id,
+            mentions=json.dumps(mention_ids) if mention_ids else None,
         )
 
         db.session.add(msg)
@@ -542,17 +609,23 @@ def post_team_message(team_id):
             sender_name = u.name if u else "A team member"
             team = Team.query.get(team_id)
 
-            if recipient_tokens:
-                send_expo_push(
-                    recipient_tokens,
-                    title=f"{team.name if team else 'Team'} · {sender_name}",
-                    body=body[:150],
-                    data_payload={
-                        "screen": "team-chat",
-                        "team_id": team_id,
-                        "message_id": msg.id,
-                    }
-                )
+            def tokens_for(ids):
+                if not ids:
+                    return []
+                return [t.token for t in PushToken.query.filter(PushToken.user_id.in_(ids)).all()]
+
+            mentioned = set(mention_ids)
+            normal_tokens = tokens_for([i for i in recipient_ids if i not in mentioned])
+            mention_tokens = tokens_for([i for i in recipient_ids if i in mentioned])
+            payload = {"screen": "team-chat", "team_id": team_id, "message_id": msg.id}
+            team_label = team.name if team else 'Team'
+
+            if normal_tokens:
+                send_expo_push(normal_tokens, title=f"{team_label} · {sender_name}",
+                               body=body[:150], data_payload=payload)
+            if mention_tokens:
+                send_expo_push(mention_tokens, title=f"{team_label} · {sender_name} mentioned you",
+                               body=body[:150], data_payload=payload)
 
         except Exception as push_error:
             # A notification failure must not undo the saved message
@@ -560,13 +633,7 @@ def post_team_message(team_id):
 
         return jsonify({
             "status": "success",
-            "message": {
-                "id": msg.id,
-                "user_id": msg.user_id,
-                "name": u.name if u else "You",
-                "body": msg.body,
-                "created_at": msg.created_at.isoformat() + "+00:00",
-            },
+            "message": _serialize_messages([msg])[0],
         }), 201
 
     except Exception as e:
@@ -818,6 +885,7 @@ def delete_my_team():
 
     try:
         TeamMember.query.filter_by(team_id=team.id).delete()
+        TeamMessage.query.filter_by(team_id=team.id).delete()
         db.session.delete(team)
         db.session.commit()
         return jsonify({
