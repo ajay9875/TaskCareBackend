@@ -993,6 +993,95 @@ def superadmin_remove_team_member(team_id, user_id):
         print(f"❌ Superadmin remove team member failed: {e}")
         return jsonify({"status": "error", "message": "Remove failed"}), 500
 
+@app.route('/api/superadmin/teams/<int:team_id>/members', methods=['POST'])
+def superadmin_add_team_member(team_id):
+    if 'user_id' not in session or not session.get('super_admin_access'):
+        return jsonify({"error": "Super Admin Access Required"}), 403
+
+    team = Team.query.get(team_id)
+    if not team:
+        return jsonify({"error": "Team not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    target = User.query.get(user_id)
+    if not target:
+        return jsonify({"error": "User not found"}), 404
+
+    # Already a member?
+    existing = TeamMember.query.filter_by(team_id=team_id, user_id=user_id).first()
+    if existing:
+        return jsonify({"error": "User is already a member of this team"}), 400
+
+    # Enforce the 10-team limit for the target user
+    count = TeamMember.query.filter_by(user_id=user_id).count()
+    if count >= MAX_TEAMS_PER_USER:
+        return jsonify({
+            "error": f"User is already in {MAX_TEAMS_PER_USER} teams"
+        }), 403
+
+    try:
+        db.session.add(TeamMember(team_id=team_id, user_id=user_id, role='member'))
+        db.session.commit()
+        return jsonify({
+            "status": "success",
+            "message": f"{target.name} added to {team.name}"
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Add team member failed: {e}")
+        return jsonify({"status": "error", "message": "Add failed"}), 500
+
+@app.route('/api/teams/transfer-admin', methods=['POST'])
+def team_transfer_admin():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    team_id = data.get('team_id')
+    new_admin_id = data.get('user_id')
+
+    if not team_id or not new_admin_id:
+        return jsonify({"error": "team_id and user_id are required"}), 400
+
+    # ✅ Caller must be the admin of THIS team
+    caller = TeamMember.query.filter_by(
+        user_id=session['user_id'], team_id=team_id
+    ).first()
+    if not caller or caller.role != 'admin':
+        return jsonify({"error": "Only the team admin can transfer admin role"}), 403
+
+    if int(new_admin_id) == int(session['user_id']):
+        return jsonify({"error": "You are already the team admin"}), 400
+
+    target = TeamMember.query.filter_by(
+        team_id=team_id, user_id=new_admin_id
+    ).first()
+    if not target:
+        return jsonify({"error": "User is not a member of this team"}), 404
+
+    try:
+        # Demote current admin(s) → member
+        TeamMember.query.filter_by(team_id=team_id, role='admin').update(
+            {"role": "member"}
+        )
+        # Promote target → admin
+        target.role = 'admin'
+        db.session.commit()
+        return jsonify({
+            "status": "success",
+            "message": f"User #{new_admin_id} is now the team admin",
+            "team_id": team_id,
+            "new_admin_id": new_admin_id,
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Team transfer admin failed: {e}")
+        return jsonify({"status": "error", "message": "Transfer failed"}), 500
+
 @app.route('/api/admin/users', methods=['GET'])
 def admin_list_users():
     if 'user_id' not in session:
