@@ -90,6 +90,14 @@ class TeamMember(db.Model):
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('team_id', 'user_id', name='_team_user_uc'),)
 
+class TeamMessage(db.Model):
+    __tablename__ = 'team_message'
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
 class PushToken(db.Model):
     __tablename__ = 'push_token'
     id = db.Column(db.Integer, primary_key=True)
@@ -433,6 +441,90 @@ def get_my_team():
     return jsonify({"status": "success", "teams": teams_data}), 200
 
 from urllib.parse import quote  # add at top of file
+
+# ── TEAM CHAT ──────────────────────────────────────────────
+@app.route('/api/teams/<int:team_id>/messages', methods=['GET'])
+def get_team_messages(team_id):
+    """Poll every 5s. Returns messages after `since` (id) if given."""
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Must be a member of this team
+    membership = TeamMember.query.filter_by(
+        user_id=session['user_id'], team_id=team_id
+    ).first()
+    if not membership:
+        return jsonify({"error": "You are not in this team"}), 403
+
+    since_id = request.args.get('since', type=int)  # optional incremental fetch
+
+    q = TeamMessage.query.filter_by(team_id=team_id)
+    if since_id:
+        q = q.filter(TeamMessage.id > since_id)
+
+    msgs = q.order_by(TeamMessage.id.asc()).limit(200).all()
+
+    out = []
+    for m in msgs:
+        u = User.query.get(m.user_id)
+        out.append({
+            "id": m.id,
+            "user_id": m.user_id,
+            "name": u.name if u else "Unknown",
+            "body": m.body,
+            "created_at": m.created_at.isoformat() + "+00:00",
+        })
+
+    return jsonify({
+        "status": "success",
+        "messages": out,
+        "server_now": now_ist_naive().isoformat() + "+05:30",
+    }), 200
+
+
+@app.route('/api/teams/<int:team_id>/messages', methods=['POST'])
+def post_team_message(team_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    membership = TeamMember.query.filter_by(
+        user_id=session['user_id'], team_id=team_id
+    ).first()
+    if not membership:
+        return jsonify({"error": "You are not in this team"}), 403
+
+    data = request.get_json(silent=True) or {}
+    body = (data.get('body') or '').strip()
+
+    if not body:
+        return jsonify({"error": "Message cannot be empty"}), 400
+    if len(body) > 1000:
+        return jsonify({"error": "Message too long (max 1000 chars)"}), 400
+
+    try:
+        msg = TeamMessage(
+            team_id=team_id,
+            user_id=session['user_id'],
+            body=body,
+        )
+        db.session.add(msg)
+        db.session.commit()
+
+        u = User.query.get(session['user_id'])
+        return jsonify({
+            "status": "success",
+            "message": {
+                "id": msg.id,
+                "user_id": msg.user_id,
+                "name": u.name if u else "You",
+                "body": msg.body,
+                "created_at": msg.created_at.isoformat() + "+00:00",
+            },
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Post team message failed: {e}")
+        return jsonify({"status": "error", "message": "Send failed"}), 500
 
 @app.route('/join-team')
 def join_team_redirect():
