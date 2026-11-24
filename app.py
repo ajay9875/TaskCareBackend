@@ -2982,12 +2982,16 @@ def public_stats():
 # INITIALIZATION
 # ======================
 # This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the FitWisely app for maximum engagement.
-def send_daily_progress_report():
+
+from datetime import timedelta
+
+
+# Weekly email report for the steps (Monday to Sunday, walking steps only)
+def send_weekly_progress_report():
     sender_email = (os.getenv('EMAIL_USER') or '').replace(' ', '')
     sender_password = (os.getenv('EMAIL_PASS') or '').replace(' ', '')
     login_url = "https://TaskCare360.pythonanywhere.com/open-app"
 
-    # 📋 Tracking lists for the report
     sent_to = []
     skipped = []
     failed = []
@@ -3016,132 +3020,202 @@ def send_daily_progress_report():
                 "failed": failed,
             }
 
+        # Monday (weekday 0) through Sunday (weekday 6) of the current week
+        today = datetime.now(IST).date()
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
+        week_dates = [week_start + timedelta(days=i) for i in range(7)]
+        week_range_label = f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b %Y')}"
+
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(sender_email, sender_password)
 
             for user in users:
                 try:
-                    # --- GET TODAY'S DATE PROPERLY ---
-                    today = datetime.now(IST).date()
+                    logs = StepLog.query.filter(
+                        StepLog.user_id == user.id,
+                        StepLog.date >= week_start,
+                        StepLog.date <= week_end,
+                    ).all()
+                    logs_by_date = {log.date: log for log in logs}
 
-                    # Query StepLog for today
-                    today_stats = StepLog.query.filter_by(
-                        user_id=user.id,
-                        date=today
-                    ).first()
+                    default_target = user.target_steps if user.target_steps else 5000
 
-                    # 🏃‍♂️ Extract separated tracking data variables securely
-                    walk_steps = today_stats.walking_steps if today_stats else 0
-                    tread_steps = today_stats.treadmill_steps if today_stats else 0
+                    # Extract walking-only steps daywise (newest first)
+                    day_entries = []
+                    total_walk_steps = 0
+                    active_days = 0
 
-                    # Pull tasks early to determine if we should skip the email entirely
-                    tasks = Todo.query.filter_by(user_id=user.id, is_completed=False, is_deleted=False).order_by(Todo.SNo.desc()).all()
-                    
-                    # 🛑 TOTAL EMPTY DETECTION:
-                    # If they have NO steps AND NO pending tasks, send a friendly nudge email instead of skipping.
-                    is_empty_user = (walk_steps == 0 and tread_steps == 0 and not tasks)
-                    if is_empty_user:
-                        print(f"📨 Nudge email for {user.name} ({user.email}): No steps and no pending tasks.")
+                    for d in reversed(week_dates):
+                        log = logs_by_date.get(d)
+                        walk_steps = int((log.walking_steps or 0) if log else 0)
+                        day_target = int(
+                            (getattr(log, "target_steps", None) if log else None)
+                            or default_target
+                            or 5000
+                        )
 
-                    # 📊 CASE 1: User HAS step data today -> Render full premium report card
-                    if walk_steps > 0 or tread_steps > 0:
                         walk_km = round(walk_steps * 0.000762, 2)
                         walk_cal = int(walk_steps * 0.04)
 
-                        tread_km = round(tread_steps * 0.000762, 2)
-                        tread_cal = int(tread_steps * 0.05)
+                        if walk_steps > 0:
+                            active_days += 1
+                            total_walk_steps += walk_steps
+                            pace_val = round(1000 / (walk_steps * 0.000762), 1)
+                            pace_str = f"{pace_val:.1f}"
+                            steps_per_km = round(walk_steps / max(0.01, walk_km))
+                            steps_left = max(0, day_target - walk_steps)
+                        else:
+                            pace_str = "0.0"
+                            steps_per_km = 0
+                            steps_left = day_target
 
-                        combined_steps = walk_steps + tread_steps
-                        combined_km = round(combined_steps * 0.000762, 2)
-                        combined_cal = walk_cal + tread_cal
+                        progress_pct = (
+                            min(int((walk_steps / day_target) * 100), 100)
+                            if day_target > 0
+                            else 0
+                        )
 
-                        target = user.target_steps if user.target_steps else 5000
-                        steps_left = max(0, target - combined_steps)
-                        progress_percent = min(int((combined_steps / target) * 100), 100) if target > 0 else 0
+                        day_entries.append({
+                            "date": d,
+                            "walk_steps": walk_steps,
+                            "walk_km": walk_km,
+                            "walk_cal": walk_cal,
+                            "pace_str": pace_str,
+                            "steps_per_km": steps_per_km,
+                            "steps_left": steps_left,
+                            "day_target": day_target,
+                            "progress_pct": progress_pct,
+                        })
+
+                    tasks = (
+                        Todo.query.filter_by(
+                            user_id=user.id,
+                            is_completed=False,
+                            is_deleted=False,
+                        )
+                        .order_by(Todo.SNo.desc())
+                        .all()
+                    )
+
+                    is_empty_user = (total_walk_steps == 0 and not tasks)
+                    if is_empty_user:
+                        print(
+                            f"📨 Weekly nudge email for {user.name} ({user.email}): "
+                            f"No walking steps this week and no pending tasks."
+                        )
+
+                    if total_walk_steps > 0:
+                        total_walk_km = round(total_walk_steps * 0.000762, 2)
+                        total_walk_cal = int(total_walk_steps * 0.04)
+                        avg_weekly_steps = round(total_walk_steps / 7)
+                        weekly_target = default_target * 7
+                        weekly_steps_left = max(0, weekly_target - total_walk_steps)
+                        weekly_progress_pct = (
+                            min(int((total_walk_steps / weekly_target) * 100), 100)
+                            if weekly_target > 0
+                            else 0
+                        )
+
+                        daywise_cards_html = ""
+                        for entry in day_entries:
+                            left_color = "#4ecca3" if entry["steps_left"] == 0 else "#ff6b35"
+                            daywise_cards_html += f"""
+                            <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.10); margin-bottom: 14px;">
+                                <div style="font-size: 15px; color: #ffffff; font-weight: 800; margin-bottom: 12px; letter-spacing: 0.3px;">
+                                    📅 {entry['date'].strftime('%a, %d %b %Y')}
+                                </div>
+                                <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
+                                    <tr>
+                                        <td style="width: 48%; vertical-align: top;">
+                                            <div style="margin-bottom: 8px; padding-left: 2px;">
+                                                <span style="color: #4ecca3; font-size: 12px; font-weight: 800; letter-spacing: 0.8px;">🚶 WALKING</span>
+                                            </div>
+                                            <div style="background-color: rgba(255, 255, 255, 0.03); padding: 12px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.07);">
+                                                <div style="font-size: 17px; font-weight: bold; color: #ffffff;">{entry['walk_steps']:,}</div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px;">STEPS</div>
+                                                <div style="font-size: 17px; font-weight: bold; color: #ffffff;">{entry['walk_km']:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px;">DISTANCE</div>
+                                                <div style="font-size: 17px; font-weight: bold; color: #ff6b35;">{entry['walk_cal']} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
+                                            </div>
+                                        </td>
+                                        <td style="width: 4%;"></td>
+                                        <td style="width: 48%; vertical-align: top; border-left: 1px solid rgba(255, 255, 255, 0.12); padding-left: 12px;">
+                                            <div style="margin-bottom: 8px; padding-left: 2px;">
+                                                <span style="color: #4ecca3; font-size: 12px; font-weight: 800; letter-spacing: 0.8px;">⏱️ METRICS</span>
+                                            </div>
+                                            <div style="background-color: rgba(255, 255, 255, 0.03); padding: 12px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.07);">
+                                                <div style="font-size: 17px; font-weight: bold; color: #ffffff;">{entry['pace_str']}</div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px;">PACE (MIN/KM)</div>
+                                                <div style="font-size: 17px; font-weight: bold; color: #ffffff;">{entry['steps_per_km']:,}</div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px;">STEPS / KM</div>
+                                                <div style="font-size: 17px; font-weight: bold; color: #4ecca3;">{entry['progress_pct']}% <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">DONE</span></div>
+                                                <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">GOAL PROGRESS</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </table>
+                                <div style="height: 1px; background-color: rgba(255, 255, 255, 0.12); margin: 14px 0 12px 0;"></div>
+                                <div style="color: #4ecca3; font-size: 11px; font-weight: 800; letter-spacing: 1px; margin-bottom: 10px;">DAILY GOAL PROGRESS</div>
+                                <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
+                                    <tr>
+                                        <td style="width: 65%; vertical-align: middle;">
+                                            <div style="font-size: 14px; font-weight: 800; color: #ffffff;">{entry['walk_steps']:,} <span style="font-size: 10px; color: #a4b0be; font-weight: 700;">TOTAL STEPS</span></div>
+                                            <div style="font-size: 14px; font-weight: 800; color: {left_color}; margin-top: 4px;">{entry['steps_left']:,} <span style="font-size: 10px; color: #a4b0be; font-weight: 700;">STEPS LEFT</span></div>
+                                            <div style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 4px;">{entry['day_target']:,} <span style="font-size: 10px; color: #a4b0be; font-weight: 700;">DAILY GOAL</span></div>
+                                        </td>
+                                        <td style="width: 35%; vertical-align: middle; text-align: center;">
+                                            <div style="display: inline-block; padding: 10px 16px; background-color: rgba(255, 255, 255, 0.05); border-radius: 24px; border: 2px solid #4ecca3;">
+                                                <strong style="color: #ffffff; font-size: 16px; font-weight: 800;">{entry['progress_pct']}%</strong>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>
+                            """
 
                         fitness_html = f"""
                         <div style="background-color: #16213e; padding: 24px; border-radius: 22px; border: 1.5px solid rgba(255, 255, 255, 0.12); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35); color: #ffffff;">
-                            <div style="font-size: 16px; color: #ffffff; font-weight: 800; margin-bottom: 20px; letter-spacing: 0.3px;">
-                                📆 {today.strftime('%d %b')} Report
+                            <div style="font-size: 16px; color: #ffffff; font-weight: 800; margin-bottom: 6px; letter-spacing: 0.3px;">
+                                📆 Weekly Walking Report
                             </div>
-                            <table style="width: 100%; border-collapse: collapse; margin-bottom: 4px;" cellpadding="0" cellspacing="0">
-                                <tr>
-                                    <td style="width: 48%; vertical-align: top;">
-                                        <div style="margin-bottom: 12px; padding-left: 4px;">
-                                            <span style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 0.8px;">🚶 WALKING</span>
-                                        </div>
-                                        <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); min-height: 150px;">
-                                            <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_steps:,}</div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>
-                                            <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{walk_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>
-                                            <div style="font-size: 19px; font-weight: bold; color: #ff6b35; margin-top: 2px;">{walk_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
-                                        </div>
-                                    </td>
-                                    <td style="width: 4%;"></td>
-                                    <td style="width: 48%; vertical-align: top;">
-                                        <div style="margin-bottom: 12px; padding-left: 4px;">
-                                            <span style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 0.8px;">⚡ TREADMILL</span>
-                                        </div>
-                                        <div style="background-color: rgba(255, 255, 255, 0.04); padding: 16px 14px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); min-height: 150px;">
-                                            <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_steps:,}</div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">STEPS</div>
-                                            <div style="font-size: 19px; font-weight: bold; color: #ffffff; margin-top: 2px;">{tread_km:.2f} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">KM</span></div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 12px;">DISTANCE</div>
-                                            <div style="font-size: 19px; font-weight: bold; color: #ff6b35; margin-top: 2px;">{tread_cal} <span style="font-size: 11px; color: #a4b0be; font-weight: 500;">CAL</span></div>
-                                            <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">ENERGY</div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </table>
-                            <div style="height: 1.5px; background-color: rgba(255, 255, 255, 0.15); margin: 24px 0 16px 0;"></div>
-                            <h4 style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 1.2px; margin: 0 0 16px 0; text-align: left;">COMBINED PERFORMANCE</h4>
-                            <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
-                                <tr>
-                                    <td style="width: 55%; vertical-align: middle;">
-                                        <table style="width: 100%; border-collapse: collapse;">
-                                            <tr>
-                                                <td style="padding-bottom: 14px;">
-                                                    <div style="font-size: 20px; font-weight: 800; color: #ffffff; line-height: 24px;">{combined_steps:,}</div>
-                                                    <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">TOTAL STEPS</div>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding-bottom: 14px;">
-                                                    {f'<div style="font-size: 20px; font-weight: 800; color: #4ecca3; line-height: 24px;">{steps_left:,}</div>' if steps_left == 0 else f'<div style="font-size: 20px; font-weight: 800; color: #ffffff; line-height: 24px;">{steps_left:,}</div>'}
-                                                    <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">STEPS REMAINING</div>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td>
-                                                    <div style="font-size: 20px; font-weight: 800; color: #ffffff; line-height: 24px;">{target:,}</div>
-                                                    <div style="color: #a4b0be; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; margin-top: 2px;">DAILY GOAL</div>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                    </td>
-                                    <td style="width: 45%; vertical-align: middle; text-align: center; padding-left: 12px;">
-                                        <div style="display: inline-block; padding: 12px 20px; background-color: rgba(255, 255, 255, 0.05); border-radius: 30px; border: 2px solid #4ecca3; margin-bottom: 12px;">
-                                            <strong style="color: #ffffff; font-size: 18px; font-weight: 800;">{progress_percent}%</strong>
-                                        </div>
-                                        <div style="width: 70%; height: 1px; background-color: rgba(255, 255, 255, 0.15); margin: 0 auto 12px auto;"></div>
-                                        <div style="text-align: center;">
-                                            <div style="color: #ffffff; font-size: 18px; font-weight: 700; margin-bottom: 4px; line-height: 20px;">
-                                                {combined_km:.2f} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">KM</span>
-                                            </div>
-                                            <div style="color: #ff6b35; font-size: 18px; font-weight: 700; line-height: 20px;">
-                                                {combined_cal} <span style="color: #a4b0be; font-size: 14px; font-weight: 600;">CAL</span>
-                                            </div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </table>
-                            <div style="background-color: rgba(255, 255, 255, 0.1); border-radius: 10px; height: 8px; overflow: hidden; margin: 24px 0 14px 0;">
-                                <div style="background-color: #4ecca3; width: {progress_percent}%; height: 8px; border-radius: 10px;"></div>
+                            <div style="font-size: 12px; color: #4ecca3; font-weight: 700; margin-bottom: 18px;">
+                                {week_range_label} · Mon–Sun Walking Steps Only
                             </div>
-                            <div style="text-align: center; margin-top: 28px;">
+
+                            <div style="background-color: rgba(0, 0, 0, 0.25); padding: 14px; border-radius: 14px; border: 1px solid rgba(78, 204, 163, 0.25); margin-bottom: 18px;">
+                                <div style="color: #4ecca3; font-size: 12px; font-weight: 800; letter-spacing: 1px; margin-bottom: 10px;">WEEKLY WALKING SUMMARY</div>
+                                <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
+                                    <tr>
+                                        <td style="width: 33%; text-align: center;">
+                                            <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.8px;">WALKING STEPS</div>
+                                            <div style="color: #ffffff; font-size: 17px; font-weight: 800; margin-top: 3px;">{total_walk_steps:,}</div>
+                                        </td>
+                                        <td style="width: 33%; text-align: center; border-left: 1px solid rgba(255,255,255,0.12); border-right: 1px solid rgba(255,255,255,0.12);">
+                                            <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.8px;">DISTANCE</div>
+                                            <div style="color: #ffffff; font-size: 17px; font-weight: 800; margin-top: 3px;">{total_walk_km:.2f} <span style="font-size: 10px; color: #a4b0be;">KM</span></div>
+                                        </td>
+                                        <td style="width: 34%; text-align: center;">
+                                            <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.8px;">DAYS ACTIVE</div>
+                                            <div style="color: #4ecca3; font-size: 17px; font-weight: 800; margin-top: 3px;">{active_days}/7</div>
+                                        </td>
+                                    </tr>
+                                </table>
+                                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 12px; color: #a4b0be; text-align: center;">
+                                    Avg/Day: <strong style="color: #ffffff;">{avg_weekly_steps:,}</strong> ·
+                                    Energy: <strong style="color: #ff6b35;">{total_walk_cal} CAL</strong> ·
+                                    Weekly Left: <strong style="color: #ffffff;">{weekly_steps_left:,}</strong> ({weekly_progress_pct}%)
+                                </div>
+                            </div>
+
+                            <div style="height: 1.5px; background-color: rgba(255, 255, 255, 0.15); margin: 16px 0;"></div>
+                            <h4 style="color: #4ecca3; font-size: 13px; font-weight: 800; letter-spacing: 1.2px; margin: 0 0 14px 0; text-align: left;">DAYWISE WALKING & METRICS</h4>
+
+                            {daywise_cards_html}
+
+                            <div style="text-align: center; margin-top: 24px;">
                                 <a href="{login_url}" style="background-color: #4ecca3; color: #1a1a2e; padding: 14px 36px; text-decoration: none; border-radius: 12px; font-size: 15px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(78, 204, 163, 0.3); letter-spacing: 0.3px;">
                                     Open FitWisely
                                 </a>
@@ -3149,25 +3223,24 @@ def send_daily_progress_report():
                         </div>
                         """
                     elif is_empty_user:
-                        # 👋 CASE 3: User HAS NO steps AND NO tasks -> Friendly nudge email
                         fitness_html = f"""
                         <div style="background-color: #16213e; padding: 28px 24px; border-radius: 22px; border: 1.5px solid rgba(255, 255, 255, 0.12); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35); color: #ffffff; text-align: center;">
                             <div style="font-size: 42px; margin-bottom: 10px;">👋</div>
                             <h3 style="color: #ffffff; font-size: 19px; font-weight: 800; margin: 0 0 10px 0; letter-spacing: 0.2px;">
-                                Hi {user.name}, let's get started today!
+                                Hi {user.name}, let's make this week count!
                             </h3>
                             <p style="color: #a4b0be; font-size: 14px; line-height: 21px; margin: 0 0 18px 0;">
-                                You haven't logged any activity or tasks yet today. Open the app to:
+                                No walking steps or open tasks were recorded for {week_range_label}. Open the app to:
                             </p>
                             <div style="text-align: left; display: inline-block; margin: 0 auto 20px auto;">
                                 <p style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0;">
-                                    📝 <strong>Add a task</strong> to stay productive
+                                    📝 <strong>Add a task</strong> to stay on track
                                 </p>
                                 <p style="color: #ffffff; font-size: 14px; margin: 0 0 10px 0;">
-                                    🚶 <strong>Walk</strong> to save your steps
+                                    🚶 <strong>Walk</strong> to log your daily walking steps
                                 </p>
                                 <p style="color: #ffffff; font-size: 14px; margin: 0;">
-                                    🎯 <strong>Hit your daily goal</strong> of {(user.target_steps if user.target_steps else 5000):,} steps
+                                    🎯 <strong>Aim for</strong> {default_target:,} walking steps/day
                                 </p>
                             </div>
                             <div style="text-align: center; margin-top: 10px;">
@@ -3178,14 +3251,13 @@ def send_daily_progress_report():
                         </div>
                         """
                     else:
-                        # 🚫 CASE 2: User HAS NO step data today -> Render the premium dashed empty block placeholder
                         fitness_html = f"""
                         <div style="background-color: #16213e; padding: 24px; border-radius: 22px; border: 1.5px dashed rgba(255, 255, 255, 0.15); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; text-align: center; color: #a4b0be;">
                             <div style="font-size: 16px; color: #ffffff; font-weight: 800; margin-bottom: 14px; text-align: left;">
-                                📆 {today.strftime('%d %b')} Report
+                                📆 Weekly Walking Report ({week_range_label})
                             </div>
                             <p style="font-size: 14px; color: rgba(255,255,255,0.4); margin: 20px 0;">
-                                💤 No fitness tracking activity or step records logged for today yet.
+                                💤 No walking steps logged during this weekly period yet.
                             </p>
                             <div style="text-align: center; margin-top: 14px;">
                                 <a href="{login_url}" style="background-color: rgba(255,255,255,0.08); color: #ffffff; padding: 10px 24px; text-decoration: none; border-radius: 10px; font-size: 13px; font-weight: bold; display: inline-block; border: 1px solid rgba(255,255,255,0.15);">
@@ -3195,9 +3267,7 @@ def send_daily_progress_report():
                         </div>
                         """
 
-                    # Tasks section rendering framework
                     if is_empty_user:
-                        # Nudge emails already show the CTA card above — no separate task box needed
                         task_content = ""
                     elif not tasks:
                         task_content = """
@@ -3231,11 +3301,10 @@ def send_daily_progress_report():
                         <p style="font-family: Arial, sans-serif;"><strong>Total pending tasks:</strong> {len(tasks)}</p>
                         """
 
-                    # Final HTML Assembly
                     html_body = f"""
                     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; color: #333;">
                         <h2>Hello, {user.name}! 👋</h2>
-                        <p>Here's your daily progress report:</p>
+                        <p>Here's your weekly progress report ({week_range_label}):</p>
 
                         {fitness_html}
 
@@ -3248,13 +3317,11 @@ def send_daily_progress_report():
                     </div>
                     """
 
-                    # Subject line varies for nudge emails
                     if is_empty_user:
-                        subject = f"👋 Let's get started today - {today.strftime('%b %d')}"
+                        subject = f"👋 Let's get moving this week ({week_start.strftime('%b %d')} – {week_end.strftime('%b %d')})"
                     else:
-                        subject = f"📊 Daily Progress - {today.strftime('%b %d')}"
+                        subject = f"📊 Weekly Progress - {week_start.strftime('%b %d')} – {week_end.strftime('%b %d')}"
 
-                    # Send email out to active user mailbox
                     msg = MIMEMultipart("alternative")
                     msg['From'] = f"FitWisely Progress <{sender_email}>"
                     msg['To'] = user.email
@@ -3265,17 +3332,17 @@ def send_daily_progress_report():
                     sent_to.append({
                         "email": user.email,
                         "name": user.name,
-                        "type": "nudge" if is_empty_user else "report",
+                        "type": "nudge" if is_empty_user else "weekly_report",
                     })
-                    print(f"✅ Email sent to {user.email} ({'nudge' if is_empty_user else 'report'})")
+                    print(f"✅ Weekly email sent to {user.email} ({'nudge' if is_empty_user else 'report'})")
 
                 except Exception as e:
-                    print(f"❌ Failed to send to {user.email}: {str(e)}")
+                    print(f"❌ Failed to send weekly report to {user.email}: {str(e)}")
                     failed.append({"email": user.email, "error": str(e)})
                     continue
 
             print(
-                f"📧 Done — sent: {len(sent_to)} | skipped: {len(skipped)} "
+                f"📧 Weekly Done — sent: {len(sent_to)} | skipped: {len(skipped)} "
                 f"| failed: {len(failed)} | total users: {len(users)}"
             )
             return {
@@ -3288,7 +3355,7 @@ def send_daily_progress_report():
             }
 
     except Exception as e:
-        print(f"❌ Fatal error in send_daily_task_reminders: {str(e)}")
+        print(f"❌ Fatal error in send_weekly_progress_report: {str(e)}")
         return {
             "error": str(e),
             "total_users": 0,
@@ -3299,11 +3366,11 @@ def send_daily_progress_report():
         }
     
 # 🧪 TEMPORARY TEST ROUTE: Trigger emails instantly via browser
-@app.route('/api/send-daily-email')
-def send_daily_email():
+@app.route('/api/send-weekly-email')
+def send_weekly_email():
     print("🚀 Manual trigger: Executing email sequence...")
     try:
-        result = send_daily_progress_report()
+        result = send_weekly_progress_report()
 
         # If the function itself reported a hard failure (creds missing / fatal error)
         if result.get("error"):
