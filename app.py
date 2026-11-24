@@ -2982,14 +2982,10 @@ def public_stats():
 # INITIALIZATION
 # ======================
 # This function compiles the user's daily fitness stats and pending tasks into a beautifully formatted HTML email, and sends it to their registered email address. It handles both the case where the user has no step data for the day (showing 0 steps) and the case where they have pending tasks (listing them in a table). The email also includes a prominent button that deep-links back into the FitWisely app for maximum engagement.
-
 from datetime import timedelta
 
 
-from datetime import timedelta
-
-
-def _dynamic_stat_font_px(formatted_value: str, base_px: int = 17, min_px: int = 13) -> int:
+def _dynamic_stat_font_px(formatted_value: str, base_px: int = 17, min_px: int = 12) -> int:
     """Scale font size down slightly when formatted numbers get long (e.g. 1,000,000+)."""
     length = len(str(formatted_value))
     if length <= 6:
@@ -3065,8 +3061,12 @@ def send_weekly_progress_report():
                         raw_walk = int((log.walking_steps or 0) if log else 0)
                         walk_steps = raw_walk if raw_walk > 0 else 0
 
-                        raw_target = (getattr(log, "target_steps", None) if log else None)
-                        day_target = int(raw_target) if (raw_target and int(raw_target) > 0) else default_target
+                        raw_target = getattr(log, "target_steps", None) if log else None
+                        day_target = (
+                            int(raw_target)
+                            if (raw_target and int(raw_target) > 0)
+                            else default_target
+                        )
 
                         walk_km = round(walk_steps * 0.000762, 2)
                         walk_cal = int(walk_steps * 0.04)
@@ -3130,8 +3130,10 @@ def send_weekly_progress_report():
                             else 0
                         )
 
-                        sum_steps_px = _dynamic_stat_font_px(f"{total_walk_steps:,}", base_px=16, min_px=12)
-                        sum_km_px = _dynamic_stat_font_px(f"{total_walk_km:.2f}", base_px=16, min_px=12)
+                        sum_steps_str = f"{total_walk_steps:,}"
+                        sum_km_str = f"{total_walk_km:.2f}"
+                        sum_steps_px = _dynamic_stat_font_px(sum_steps_str, base_px=16, min_px=12)
+                        sum_km_px = _dynamic_stat_font_px(sum_km_str, base_px=16, min_px=12)
 
                         daywise_cards_html = ""
                         for entry in day_entries:
@@ -3144,11 +3146,12 @@ def send_weekly_progress_report():
                             left_str = f"{entry['steps_left']:,}"
                             goal_str = f"{entry['day_target']:,}"
 
-                            steps_px = _dynamic_stat_font_px(steps_str, base_px=16, min_px=13)
-                            km_px = _dynamic_stat_font_px(km_str, base_px=16, min_px=13)
-                            cal_px = _dynamic_stat_font_px(cal_str, base_px=16, min_px=13)
-                            pace_px = _dynamic_stat_font_px(entry["pace_str"], base_px=16, min_px=13)
-                            spm_px = _dynamic_stat_font_px(steps_km_str, base_px=16, min_px=13)
+                            steps_px = _dynamic_stat_font_px(steps_str, base_px=16, min_px=12)
+                            km_px = _dynamic_stat_font_px(km_str, base_px=16, min_px=12)
+                            cal_px = _dynamic_stat_font_px(cal_str, base_px=16, min_px=12)
+                            pace_px = _dynamic_stat_font_px(entry["pace_str"], base_px=16, min_px=12)
+                            spm_px = _dynamic_stat_font_px(steps_km_str, base_px=16, min_px=12)
+                            goal_row_px = _dynamic_stat_font_px(steps_str, base_px=13, min_px=11)
 
                             daywise_cards_html += f"""
                             <div style="background-color: rgba(255, 255, 255, 0.04); padding: 14px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.10); margin-bottom: 14px; overflow: hidden;">
@@ -3173,7 +3176,7 @@ def send_weekly_progress_report():
                                             </div>
                                         </td>
                                         <td style="width: 2%;"></td>
-                                        <td style="width: 49%; vertical-align: top; padding-left: 5px;">
+                                        <td style="width: 49%; vertical-align: top; border-left: 1px solid rgba(255, 255, 255, 0.12); padding-left: 8px;">
                                             <div style="margin-bottom: 6px; padding-left: 2px;">
                                                 <span style="color: #4ecca3; font-size: 11px; font-weight: 800; letter-spacing: 0.6px; white-space: nowrap;">⏱️ METRICS</span>
                                             </div>
@@ -3197,13 +3200,13 @@ def send_weekly_progress_report():
                                 <table style="width: 100%; table-layout: fixed; border-collapse: collapse;" cellpadding="0" cellspacing="0">
                                     <tr>
                                         <td style="width: 68%; vertical-align: middle; padding-right: 8px; overflow-wrap: anywhere;">
-                                            <div style="font-size: 13px; font-weight: 800; color: #ffffff; line-height: 1.4;">
+                                            <div style="font-size: {goal_row_px}px; font-weight: 800; color: #ffffff; line-height: 1.4;">
                                                 {steps_str} <span style="font-size: 9px; color: #a4b0be; font-weight: 700;">TOTAL STEPS</span>
                                             </div>
-                                            <div style="font-size: 13px; font-weight: 800; color: {left_color}; margin-top: 3px; line-height: 1.4;">
+                                            <div style="font-size: {goal_row_px}px; font-weight: 800; color: {left_color}; margin-top: 3px; line-height: 1.4;">
                                                 {left_str} <span style="font-size: 9px; color: #a4b0be; font-weight: 700;">STEPS LEFT</span>
                                             </div>
-                                            <div style="font-size: 13px; font-weight: 800; color: #ffffff; margin-top: 3px; line-height: 1.4;">
+                                            <div style="font-size: {goal_row_px}px; font-weight: 800; color: #ffffff; margin-top: 3px; line-height: 1.4;">
                                                 {goal_str} <span style="font-size: 9px; color: #a4b0be; font-weight: 700;">DAILY GOAL</span>
                                             </div>
                                         </td>
@@ -3219,31 +3222,39 @@ def send_weekly_progress_report():
 
                         fitness_html = f"""
                         <div style="background-color: #16213e; padding: 20px 16px; border-radius: 22px; border: 1.5px solid rgba(255, 255, 255, 0.12); max-width: 460px; margin: 0 auto 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.35); color: #ffffff; overflow: hidden;">
-                            <div style="font-size: 16px; color: #ffffff; font-weight: 800; margin-bottom: 4px; letter-spacing: 0.2px; line-height: 1.3;">
-                                📆 Weekly Walking Report
-                            </div>
-                            <div style="font-size: 11px; color: #4ecca3; font-weight: 700; margin-bottom: 16px; line-height: 1.4;">
-                                {week_range_label} · Mon–Sun Walking Only
+                            <div style="font-size: 18px; color: #ffffff; font-weight: 800; margin-bottom: 14px; text-align: center; letter-spacing: 0.3px; line-height: 1.3;">
+                                📊 Your Fitness Overview
                             </div>
 
-                            <div style="background-color: rgba(0, 0, 0, 0.25); padding: 12px; border-radius: 14px; border: 1px solid rgba(78, 204, 163, 0.25); margin-bottom: 16px;">
-                                <div style="color: #4ecca3; font-size: 11px; font-weight: 800; letter-spacing: 0.8px; margin-bottom: 10px; line-height: 1.3;">WEEKLY WALKING SUMMARY</div>
-                                <table style="width: 100%; table-layout: fixed; border-collapse: collapse;" cellpadding="0" cellspacing="0">
-                                    <tr>
-                                        <td style="width: 34%; text-align: center; padding: 0 4px; overflow-wrap: anywhere;">
-                                            <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; line-height: 1.3;">WALKING STEPS</div>
-                                            <div style="color: #ffffff; font-size: {sum_steps_px}px; font-weight: 800; margin-top: 3px; line-height: 1.25;">{total_walk_steps:,}</div>
-                                        </td>
-                                        <td style="width: 33%; text-align: center; padding: 0 4px; border-left: 1px solid rgba(255,255,255,0.12); border-right: 1px solid rgba(255,255,255,0.12); overflow-wrap: anywhere;">
-                                            <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; line-height: 1.3;">DISTANCE</div>
-                                            <div style="color: #ffffff; font-size: {sum_km_px}px; font-weight: 800; margin-top: 3px; line-height: 1.25;">{total_walk_km:.2f} <span style="font-size: 10px; color: #a4b0be;">KM</span></div>
-                                        </td>
-                                        <td style="width: 33%; text-align: center; padding: 0 4px; overflow-wrap: anywhere;">
-                                            <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; line-height: 1.3;">DAYS ACTIVE</div>
-                                            <div style="color: #4ecca3; font-size: 16px; font-weight: 800; margin-top: 3px; line-height: 1.25;">{active_days}/7</div>
-                                        </td>
-                                    </tr>
-                                </table>
+                            <div style="background-color: #1a1a1a; padding: 14px; border-radius: 18px; border: 1.5px solid rgba(78, 204, 163, 0.28); margin-bottom: 16px;">
+                                <div style="padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid rgba(78, 204, 163, 0.18);">
+                                    <div style="color: #4ecca3; font-size: 14px; font-weight: 800; letter-spacing: 0.8px; line-height: 1.3;">
+                                        🏆 WEEKLY WALKING SUMMARY
+                                    </div>
+                                    <div style="color: #a4b0be; font-size: 11px; margin-top: 2px; line-height: 1.35;">
+                                        {week_range_label} · Mon–Sun Walking Only
+                                    </div>
+                                </div>
+
+                                <div style="background-color: rgba(0, 0, 0, 0.35); padding: 12px 8px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08);">
+                                    <table style="width: 100%; table-layout: fixed; border-collapse: collapse;" cellpadding="0" cellspacing="0">
+                                        <tr>
+                                            <td style="width: 34%; text-align: center; padding: 0 4px; overflow-wrap: anywhere;">
+                                                <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.6px; line-height: 1.3;">WALKING STEPS</div>
+                                                <div style="color: #ffffff; font-size: {sum_steps_px}px; font-weight: 800; margin-top: 3px; line-height: 1.25;">{sum_steps_str}</div>
+                                            </td>
+                                            <td style="width: 33%; text-align: center; padding: 0 4px; border-left: 1px solid rgba(255,255,255,0.12); border-right: 1px solid rgba(255,255,255,0.12); overflow-wrap: anywhere;">
+                                                <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.6px; line-height: 1.3;">DISTANCE</div>
+                                                <div style="color: #ffffff; font-size: {sum_km_px}px; font-weight: 800; margin-top: 3px; line-height: 1.25;">{sum_km_str} <span style="font-size: 10px; color: #a4b0be;">KM</span></div>
+                                            </td>
+                                            <td style="width: 33%; text-align: center; padding: 0 4px; overflow-wrap: anywhere;">
+                                                <div style="color: #a4b0be; font-size: 9px; font-weight: 800; letter-spacing: 0.6px; line-height: 1.3;">DAYS ACTIVE</div>
+                                                <div style="color: #4ecca3; font-size: 16px; font-weight: 800; margin-top: 3px; line-height: 1.25;">{active_days}/7</div>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </div>
+
                                 <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 11px; color: #a4b0be; text-align: center; line-height: 1.5; overflow-wrap: anywhere;">
                                     Avg/Day: <strong style="color: #ffffff;">{avg_weekly_steps:,}</strong> ·
                                     Energy: <strong style="color: #ff6b35;">{total_walk_cal:,} CAL</strong> ·
