@@ -3406,14 +3406,32 @@ def send_weekly_progress_report():
             "failed": failed,
         }
     
-# 🧪 TEMPORARY TEST ROUTE: Trigger emails instantly via browser
-@app.route('/api/send-weekly-email')
-def send_weekly_email():
-    print("🚀 Manual trigger: Executing email sequence...")
+# 🧪 Trigger emails instantly via browser or cronjob
+import hmac
+import os
+from flask import jsonify
+
+@app.route('/api/send-weekly-email/<secret_code>')
+def send_weekly_email_by_path(secret_code):
+    print("🚀 Cron/URL trigger: Executing weekly email sequence...")
     try:
+        expected_secret = (os.getenv("REPORT_SECRET") or "").strip()
+        provided_secret = (secret_code or "").strip()
+
+        if not expected_secret:
+            return jsonify({
+                "status": "error",
+                "message": "REPORT_SECRET is not set or accessible.",
+            }), 500
+
+        if not provided_secret or not hmac.compare_digest(provided_secret, expected_secret):
+            return jsonify({
+                "status": "error",
+                "message": "Unauthorized.",
+            }), 401
+
         result = send_weekly_progress_report()
 
-        # If the function itself reported a hard failure (creds missing / fatal error)
         if result.get("error"):
             return jsonify({
                 "status": "error",
@@ -3421,7 +3439,6 @@ def send_weekly_email():
                 "summary": result,
             }), 500
 
-        # Otherwise — report full breakdown
         return jsonify({
             "status": "success" if result["emails_sent"] > 0 else "info",
             "message": (
@@ -3429,13 +3446,13 @@ def send_weekly_email():
                 f"{result['total_users']} user(s)."
             ),
             "summary": {
-                "total_users":  result["total_users"],
-                "emails_sent":  result["emails_sent"],
+                "total_users": result["total_users"],
+                "emails_sent": result["emails_sent"],
                 "skipped_count": len(result["skipped"]),
-                "failed_count":  len(result["failed"]),
-                "sent_to":       result["sent_to"],
-                "skipped":       result["skipped"],
-                "failed":        result["failed"],
+                "failed_count": len(result["failed"]),
+                "sent_to": result["sent_to"],
+                "skipped": result["skipped"],
+                "failed": result["failed"],
             },
         }), 200
 
