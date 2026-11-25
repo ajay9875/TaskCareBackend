@@ -664,12 +664,7 @@ def post_team_message(team_id):
             mentioned = set(mention_ids)
             normal_tokens = tokens_for([i for i in recipient_ids if i not in mentioned])
             mention_tokens = tokens_for([i for i in recipient_ids if i in mentioned])
-            payload = {
-                "screen": "team-chat",
-                "team_id": str(team_id), # Ensure it is a string
-                "name": team.name if team else "Team Chat",
-                "message_id": msg.id
-            }            
+            payload = {"screen": "team-chat", "team_id": team_id, "message_id": msg.id}
             team_label = team.name if team else 'Team'
 
             if normal_tokens:
