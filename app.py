@@ -494,6 +494,14 @@ def _serialize_messages(msgs):
         })
     return out
 
+# In-memory presence: { team_id: { user_id: last_poll_timestamp } }
+TEAM_PRESENCE = {}
+PRESENCE_TTL_SECONDS = 8  # poll is every 3s, so 8s tolerates a slow request
+
+def is_viewing_chat(team_id, user_id):
+    ts = TEAM_PRESENCE.get(team_id, {}).get(user_id)
+    return ts is not None and (time.time() - ts) < PRESENCE_TTL_SECONDS
+
 # In-memory typing state: { team_id: { user_id: (name, expiry_timestamp) } }
 TEAM_TYPING_STATE = {}
 TYPING_TTL_SECONDS = 5.0
@@ -525,7 +533,7 @@ def set_team_typing(team_id):
 
 @app.route('/api/teams/<int:team_id>/messages', methods=['GET'])
 def get_team_messages(team_id):
-    """Poll every 3s. Returns messages after `since` (id) if given, plus active typers."""
+    """Poll every 3s. Returns messages after `since` (id) if given, plus active typers and online members."""
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -535,6 +543,11 @@ def get_team_messages(team_id):
     ).first()
     if not membership:
         return jsonify({"error": "You are not in this team"}), 403
+
+    # ✅ Presence: this user has the chat open right now
+    now_ts = time.time()
+    presence = TEAM_PRESENCE.setdefault(team_id, {})
+    presence[session['user_id']] = now_ts
 
     since_id = request.args.get('since', type=int)  # optional incremental fetch
 
@@ -546,7 +559,6 @@ def get_team_messages(team_id):
     out = _serialize_messages(msgs)
 
     # Collect & prune expired typing indicators
-    now_ts = time.time()
     bucket = TEAM_TYPING_STATE.get(team_id, {})
     typing_users = []
     expired_ids = []
@@ -560,10 +572,21 @@ def get_team_messages(team_id):
     for uid in expired_ids:
         bucket.pop(uid, None)
 
+    # ✅ Online members = polled within the last PRESENCE_TTL_SECONDS
+    online_ids = [
+        uid for uid, ts in list(presence.items())
+        if now_ts - ts < PRESENCE_TTL_SECONDS
+    ]
+    # tidy very old entries
+    for uid in [u for u, ts in list(presence.items()) if now_ts - ts > 120]:
+        presence.pop(uid, None)
+
     return jsonify({
         "status": "success",
         "messages": out,
         "typing_users": typing_users,
+        "online_user_ids": online_ids,
+        "online_count": len(online_ids),
         "server_now": now_ist_naive().isoformat() + "+05:30",
     }), 200
 
@@ -649,7 +672,9 @@ def post_team_message(team_id):
                 TeamMember.user_id != sender_id
             ).all()
 
-            recipient_ids = [member.user_id for member in team_members]
+            all_recipient_ids = [member.user_id for member in team_members]
+            recipient_ids = [i for i in all_recipient_ids if not is_viewing_chat(team_id, i)]
+            skipped = [i for i in all_recipient_ids if i not in recipient_ids]
 
             sender_name = u.name if u else "A team member"
             team = Team.query.get(team_id)
@@ -663,9 +688,10 @@ def post_team_message(team_id):
             mentioned = set(mention_ids)
             normal_tokens = tokens_for([i for i in recipient_ids if i not in mentioned])
             mention_tokens = tokens_for([i for i in recipient_ids if i in mentioned])
-            print(f"[push] team={team_id} recipients={recipient_ids} "
+            
+            print(f"[push] team={team_id} notify={recipient_ids} skipped_viewing={skipped} "
                   f"normal={len(normal_tokens)} mention={len(mention_tokens)}")
-
+            
             payload = {"screen": "team-chat", "team_id": team_id, "message_id": msg.id}
 
             preview = build_push_preview(body, limit=120)
