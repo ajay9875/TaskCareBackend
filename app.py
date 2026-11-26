@@ -668,22 +668,22 @@ def post_team_message(team_id):
 
             payload = {"screen": "team-chat", "team_id": team_id, "message_id": msg.id}
 
-            preview = build_push_preview(body)
-            reply_note = "↩️ Replied: " if reply_to_id else ""
+            preview = build_push_preview(body, limit=120)
+            reply_mark = "↩️ " if reply_to_id else ""
 
             if normal_tokens:
                 send_expo_push(
                     normal_tokens,
-                    title=f"💬 {sender_name} in {team_label}",
-                    body=f"{reply_note}{preview}",
+                    title=team_label,
+                    body=f"{sender_name}: {reply_mark}{preview}",
                     data_payload=payload,
                 )
 
             if mention_tokens:
                 send_expo_push(
                     mention_tokens,
-                    title=f"🔔 {sender_name} mentioned you in {team_label}",
-                    body=f"{preview}\nTap to reply",
+                    title=f"🔔 {team_label}",
+                    body=f"{sender_name} mentioned you: {preview}",
                     data_payload=payload,
                 )
 
