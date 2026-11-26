@@ -26,6 +26,8 @@ import ssl # Added for secure connection
 from email.message import EmailMessage
 from flask_migrate import Migrate  # 🚀 Import Flask-Migrate
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+import boto3
+from botocore.config import Config
 
 load_dotenv()
 
@@ -187,6 +189,51 @@ class StepSyncEvent(db.Model):
     event_id = db.Column(db.String(80), unique=True, nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+B2_BUCKET = os.getenv('BACKBLAZE_BUCKET_NAME')
+_b2_endpoint = (os.getenv('BACKBLAZE_ENDPOINT') or '').strip()
+if _b2_endpoint and not _b2_endpoint.startswith('http'):
+    _b2_endpoint = 'https://' + _b2_endpoint
+
+s3 = boto3.client(
+    's3',
+    endpoint_url=_b2_endpoint,
+    aws_access_key_id=os.getenv('BACKBLAZE_KEY_ID'),
+    aws_secret_access_key=os.getenv('BACKBLAZE_APPLICATION_KEY'),
+    region_name=os.getenv('BACKBLAZE_REGION'),
+    config=Config(signature_version='s3v4', connect_timeout=10, read_timeout=30,
+                  retries={'max_attempts': 2}),
+)
+B2_PREFIX = 'chat/'
+SIGNED_URL_TTL = 3600  # 1 hour
+
+@app.route('/api/admin/b2-check', methods=['GET'])
+def b2_check():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    if not _is_admin(User.query.get(session['user_id'])):
+        return jsonify({"error": "Forbidden"}), 403
+
+    report = {
+        "bucket": B2_BUCKET,
+        "endpoint": _b2_endpoint,
+        "region": os.getenv('BACKBLAZE_REGION'),
+        "key_id_set": bool(os.getenv('BACKBLAZE_KEY_ID')),
+        "app_key_set": bool(os.getenv('BACKBLAZE_APPLICATION_KEY')),
+    }
+    key = f"{B2_PREFIX}_healthcheck_{secrets.token_hex(4)}.txt"
+    try:
+        s3.put_object(Bucket=B2_BUCKET, Key=key, Body=b"ok")
+        report["write"] = True
+        report["read"] = s3.get_object(Bucket=B2_BUCKET, Key=key)["Body"].read() == b"ok"
+        s3.delete_object(Bucket=B2_BUCKET, Key=key)
+        report["delete"] = True
+        report["status"] = "connected"
+        return jsonify(report), 200
+    except Exception as e:
+        report["status"] = "failed"
+        report["error"] = f"{type(e).__name__}: {e}"
+        return jsonify(report), 500
 
 def now_ist_naive() -> datetime:
     """IST clock time, no tzinfo — safe for MySQL DATETIME columns and delta math."""
@@ -477,7 +524,8 @@ FILE_EXTS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv',
              'rtf', 'zip', 'mp3', 'm4a', 'mp4'}
 ALLOWED_EXTS = IMAGE_EXTS | FILE_EXTS
 MIME_TO_EXT = {
-    'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
+    'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/pjpeg': 'jpg',
+    'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
     'image/heic': 'heic', 'image/heif': 'heif', 'application/pdf': 'pdf',
 }
 STORED_NAME_RE = re.compile(r'^[a-f0-9]{32}\.[a-z0-9]{1,5}$')
@@ -516,30 +564,38 @@ def _attachment_label(is_image, name):
 def _remove_chat_file(stored):
     if stored and STORED_NAME_RE.match(stored):
         try:
-            os.remove(os.path.join(UPLOAD_DIR, stored))
-        except OSError:
-            pass
+            s3.delete_object(Bucket=B2_BUCKET, Key=B2_PREFIX + stored)
+        except Exception as e:
+            print(f"❌ B2 delete failed: {e}")
 
 def _save_chat_upload(file_storage):
     """Returns (info, error)."""
     original = file_storage.filename or ''
     ext = os.path.splitext(original)[1].lower().lstrip('.')
     mime = (file_storage.mimetype or '').lower()
-    if not ext:
-        ext = MIME_TO_EXT.get(mime, '')
+    if ext not in ALLOWED_EXTS:
+        ext = MIME_TO_EXT.get(mime, ext)
     if ext not in ALLOWED_EXTS:
         return None, "This file type is not allowed"
 
-    stored = f"{secrets.token_hex(16)}.{ext}"
-    path = os.path.join(UPLOAD_DIR, stored)
-    file_storage.save(path)
-    size = os.path.getsize(path)
+    stream = file_storage.stream
+    stream.seek(0, os.SEEK_END)
+    size = stream.tell()
+    stream.seek(0)
     if size == 0:
-        _remove_chat_file(stored)
         return None, "The file is empty"
     if size > MAX_UPLOAD_BYTES:
-        _remove_chat_file(stored)
         return None, "File too large (max 10 MB)"
+
+    stored = f"{secrets.token_hex(16)}.{ext}"
+    try:
+        s3.upload_fileobj(
+            stream, B2_BUCKET, B2_PREFIX + stored,
+            ExtraArgs={'ContentType': mime or 'application/octet-stream'},
+        )
+    except Exception as e:
+        print(f"❌ B2 upload failed: {e}")
+        return None, "Upload failed. Please try again."
 
     display = secure_filename(original) or f"attachment.{ext}"
     return {
@@ -1000,19 +1056,21 @@ def delete_team_message(team_id, message_id):
 
 @app.route('/api/chat-files/<filename>')
 def get_chat_file(filename):
-    """Files use unguessable random names, so the link works in Image/browser without cookies."""
     if not STORED_NAME_RE.match(filename):
         abort(404)
-    if not os.path.isfile(os.path.join(UPLOAD_DIR, filename)):
+
+    params = {'Bucket': B2_BUCKET, 'Key': B2_PREFIX + filename}
+    if request.args.get('dl') == '1':
+        dl_name = secure_filename(request.args.get('name', '')) or filename
+        params['ResponseContentDisposition'] = f'attachment; filename="{dl_name}"'
+
+    try:
+        url = s3.generate_presigned_url('get_object', Params=params,
+                                        ExpiresIn=SIGNED_URL_TTL)
+    except Exception as e:
+        print(f"❌ presign failed: {e}")
         abort(404)
-    as_dl = request.args.get('dl') == '1'
-    dl_name = secure_filename(request.args.get('name', '')) or None
-    return send_from_directory(
-        UPLOAD_DIR, filename,
-        as_attachment=as_dl,
-        download_name=dl_name if as_dl else None,
-        max_age=86400,
-    )
+    return redirect(url, code=302)
     
 @app.route('/join-team')
 def join_team_redirect():
