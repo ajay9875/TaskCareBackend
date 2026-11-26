@@ -567,6 +567,12 @@ def get_team_messages(team_id):
         "server_now": now_ist_naive().isoformat() + "+05:30",
     }), 200
 
+import re
+
+def build_push_preview(text, limit=100):
+    """Single-line, trimmed preview for a notification body."""
+    t = re.sub(r"\s+", " ", text or "").strip()
+    return t if len(t) <= limit else t[:limit - 1].rstrip() + "…"
 
 @app.route('/api/teams/<int:team_id>/messages', methods=['POST'])
 def post_team_message(team_id):
@@ -645,16 +651,9 @@ def post_team_message(team_id):
 
             recipient_ids = [member.user_id for member in team_members]
 
-            # Get Expo push tokens of those members
-            recipient_tokens = [
-                token.token
-                for token in PushToken.query.filter(
-                    PushToken.user_id.in_(recipient_ids)
-                ).all()
-            ] if recipient_ids else []
-
             sender_name = u.name if u else "A team member"
             team = Team.query.get(team_id)
+            team_label = team.name if team else 'Team'
 
             def tokens_for(ids):
                 if not ids:
@@ -664,15 +663,29 @@ def post_team_message(team_id):
             mentioned = set(mention_ids)
             normal_tokens = tokens_for([i for i in recipient_ids if i not in mentioned])
             mention_tokens = tokens_for([i for i in recipient_ids if i in mentioned])
+            print(f"[push] team={team_id} recipients={recipient_ids} "
+                  f"normal={len(normal_tokens)} mention={len(mention_tokens)}")
+
             payload = {"screen": "team-chat", "team_id": team_id, "message_id": msg.id}
-            team_label = team.name if team else 'Team'
+
+            preview = build_push_preview(body)
+            reply_note = "↩️ Replied: " if reply_to_id else ""
 
             if normal_tokens:
-                send_expo_push(normal_tokens, title=f"{team_label} · {sender_name}",
-                               body=body[:150], data_payload=payload)
+                send_expo_push(
+                    normal_tokens,
+                    title=f"💬 {sender_name} in {team_label}",
+                    body=f"{reply_note}{preview}",
+                    data_payload=payload,
+                )
+
             if mention_tokens:
-                send_expo_push(mention_tokens, title=f"{team_label} · {sender_name} mentioned you",
-                               body=body[:150], data_payload=payload)
+                send_expo_push(
+                    mention_tokens,
+                    title=f"🔔 {sender_name} mentioned you in {team_label}",
+                    body=f"{preview}\nTap to reply",
+                    data_payload=payload,
+                )
 
         except Exception as push_error:
             # A notification failure must not undo the saved message
@@ -3478,10 +3491,10 @@ def send_weekly_email_by_path(secret_code):
 # ======================
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
-def send_expo_push(tokens, title, body, data_payload=None):
+def send_expo_push(tokens, title, body, data_payload=None, collapse_id=None):
     """
     Send a push notification to one or more Expo push tokens.
-    Returns True if the request was accepted by Expo.
+    Returns True if at least one device was accepted by Expo.
     """
     if not tokens:
         return False
@@ -3489,43 +3502,67 @@ def send_expo_push(tokens, title, body, data_payload=None):
     if isinstance(tokens, str):
         tokens = [tokens]
 
-    messages = []
-    for t in tokens:
-        if not t or not t.startswith("ExponentPushToken"):
-            continue
-        messages.append({
-            "to": t,
-            "sound": "default",
-            "title": title,
-            "body": body,
-            "data": data_payload or {"screen": "steps"},
-            "priority": "high",
-            "channelId": "default-v2",
-        })
-
-    if not messages:
+    # de-dupe, keep order, valid tokens only
+    valid = [t for t in dict.fromkeys(tokens)
+             if t and t.startswith(("ExponentPushToken", "ExpoPushToken"))]
+    if not valid:
         return False
 
-    try:
-        r = requests.post(
-            EXPO_PUSH_URL,
-            json=messages,
-            headers={
-                "Accept": "application/json",
-                "Accept-encoding": "gzip, deflate",
-                "Content-Type": "application/json",
-            },
-            timeout=10,
-        )
-        if r.status_code == 200:
-            print(f"✅ Push sent to {len(messages)} device(s)")
-            return True
-        print(f"❌ Expo push error {r.status_code}: {r.text}")
-        return False
-    except Exception as e:
-        print(f"❌ Push send exception: {e}")
-        return False
+    any_ok = False
+    for i in range(0, len(valid), 100):          # Expo max 100 per request
+        chunk = valid[i:i + 100]
+        messages = []
+        for t in chunk:
+            msg = {
+                "to": t,
+                "sound": "default",
+                "title": title,
+                "body": body,
+                "data": data_payload or {"screen": "steps"},
+                "priority": "high",
+                "channelId": "default-v2",
+            }
+            if collapse_id:                       # only add when provided
+                msg["collapseId"] = collapse_id
+            messages.append(msg)
 
+        try:
+            r = requests.post(
+                EXPO_PUSH_URL,
+                json=messages,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                timeout=10,
+            )
+            if r.status_code != 200:
+                print(f"❌ Expo push error {r.status_code}: {r.text}")
+                continue
+
+            tickets = r.json().get("data", [])
+            dead = []
+            for token, ticket in zip(chunk, tickets):
+                if ticket.get("status") == "ok":
+                    any_ok = True
+                else:
+                    err = (ticket.get("details") or {}).get("error")
+                    print(f"❌ Push failed for {token[:25]}…: {err or ticket.get('message')}")
+                    if err == "DeviceNotRegistered":
+                        dead.append(token)
+
+            if dead:
+                PushToken.query.filter(PushToken.token.in_(dead)).delete(
+                    synchronize_session=False
+                )
+                db.session.commit()
+
+            print(f"✅ Push batch: {len(chunk)} sent, {len(dead)} dead removed")
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Push send exception: {e}")
+
+    return any_ok
 
 def build_step_message(current, target):
     """Build a clear, professional, and highly engaging message for every 5%."""
