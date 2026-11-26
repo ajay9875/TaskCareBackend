@@ -15,6 +15,10 @@ import threading
 import requests
 import json
 
+from flask import send_from_directory
+from sqlalchemy import or_
+from werkzeug.utils import secure_filename
+
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
@@ -59,6 +63,8 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=400)   # 👈 Maximum browser limit
 )
 
+app.config['MAX_CONTENT_LENGTH'] = 12 * 1024 * 1024  # 10 MB file + form overhead
+
 db = SQLAlchemy(app)
 
 migrate = Migrate(app, db)  # 🚀 Initialize Migrate with your app and db
@@ -100,7 +106,21 @@ class TeamMessage(db.Model):
     reply_to_id = db.Column(db.Integer, nullable=True, index=True)   # plain int, no FK
     mentions = db.Column(db.Text, nullable=True)                      # JSON list of user ids
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    edited_at = db.Column(db.DateTime, nullable=True, index=True)
+    deleted_at = db.Column(db.DateTime, nullable=True, index=True)
+    attachment_file = db.Column(db.String(80), nullable=True)
+    attachment_name = db.Column(db.String(255), nullable=True)
+    attachment_mime = db.Column(db.String(100), nullable=True)
+    attachment_size = db.Column(db.Integer, nullable=True)
 
+class TeamPresence(db.Model):
+    __tablename__ = 'team_presence'
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, nullable=False, index=True)   # plain ints on purpose
+    user_id = db.Column(db.Integer, nullable=False, index=True)
+    last_seen = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('team_id', 'user_id', name='_team_presence_uc'),)
+    
 class PushToken(db.Model):
     __tablename__ = 'push_token'
     id = db.Column(db.Integer, primary_key=True)
@@ -447,7 +467,130 @@ def get_my_team():
 from urllib.parse import quote  # add at top of file
 
 # ── TEAM CHAT ──────────────────────────────────────────────
+import re
 
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat_uploads')
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+IMAGE_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'}
+FILE_EXTS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv',
+             'rtf', 'zip', 'mp3', 'm4a', 'mp4'}
+ALLOWED_EXTS = IMAGE_EXTS | FILE_EXTS
+MIME_TO_EXT = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
+    'image/heic': 'heic', 'image/heif': 'heif', 'application/pdf': 'pdf',
+}
+STORED_NAME_RE = re.compile(r'^[a-f0-9]{32}\.[a-z0-9]{1,5}$')
+
+PRESENCE_TTL_SECONDS = 8  # app polls every 3s
+
+@app.errorhandler(413)
+def _too_large(e):
+    return jsonify({"error": "File too large (max 10 MB)"}), 413
+
+# ---------- helpers ----------
+def _iso_utc(dt):
+    return dt.isoformat() + "+00:00" if dt else None
+
+def _parse_utc(s):
+    try:
+        return datetime.fromisoformat((s or '').replace('Z', '')).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        return None
+
+def _attachment_dict(m):
+    if not m.attachment_file or m.deleted_at:
+        return None
+    ext = m.attachment_file.rsplit('.', 1)[-1].lower()
+    return {
+        "file": m.attachment_file,
+        "name": m.attachment_name or m.attachment_file,
+        "mime": m.attachment_mime,
+        "size": m.attachment_size or 0,
+        "is_image": ext in IMAGE_EXTS,
+    }
+
+def _attachment_label(is_image, name):
+    return "📷 Photo" if is_image else f"📎 {name}"
+
+def _remove_chat_file(stored):
+    if stored and STORED_NAME_RE.match(stored):
+        try:
+            os.remove(os.path.join(UPLOAD_DIR, stored))
+        except OSError:
+            pass
+
+def _save_chat_upload(file_storage):
+    """Returns (info, error)."""
+    original = file_storage.filename or ''
+    ext = os.path.splitext(original)[1].lower().lstrip('.')
+    mime = (file_storage.mimetype or '').lower()
+    if not ext:
+        ext = MIME_TO_EXT.get(mime, '')
+    if ext not in ALLOWED_EXTS:
+        return None, "This file type is not allowed"
+
+    stored = f"{secrets.token_hex(16)}.{ext}"
+    path = os.path.join(UPLOAD_DIR, stored)
+    file_storage.save(path)
+    size = os.path.getsize(path)
+    if size == 0:
+        _remove_chat_file(stored)
+        return None, "The file is empty"
+    if size > MAX_UPLOAD_BYTES:
+        _remove_chat_file(stored)
+        return None, "File too large (max 10 MB)"
+
+    display = secure_filename(original) or f"attachment.{ext}"
+    return {
+        "file": stored,
+        "name": display[:200],
+        "mime": mime[:100] or None,
+        "size": size,
+        "is_image": ext in IMAGE_EXTS,
+    }, None
+
+def _clean_mentions(team_id, raw_mentions, sender_id):
+    ids = []
+    if isinstance(raw_mentions, list):
+        member_ids = {m.user_id for m in TeamMember.query.filter_by(team_id=team_id).all()}
+        for x in raw_mentions:
+            try:
+                i = int(x)
+            except (TypeError, ValueError):
+                continue
+            if i in member_ids and i != sender_id and i not in ids:
+                ids.append(i)
+    return ids
+
+# ---------- presence (stored in DB so every worker sees it) ----------
+def mark_presence(team_id, user_id):
+    try:
+        row = TeamPresence.query.filter_by(team_id=team_id, user_id=user_id).first()
+        now = datetime.utcnow()
+        if row:
+            row.last_seen = now
+        else:
+            db.session.add(TeamPresence(team_id=team_id, user_id=user_id, last_seen=now))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+def clear_presence(team_id, user_id):
+    try:
+        TeamPresence.query.filter_by(team_id=team_id, user_id=user_id).delete()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+def viewing_user_ids(team_id):
+    cutoff = datetime.utcnow() - timedelta(seconds=PRESENCE_TTL_SECONDS)
+    rows = TeamPresence.query.filter(
+        TeamPresence.team_id == team_id, TeamPresence.last_seen >= cutoff
+    ).all()
+    return {r.user_id for r in rows}
+
+# ---------- serializer ----------
 def _serialize_messages(msgs):
     if not msgs:
         return []
@@ -472,35 +615,45 @@ def _serialize_messages(msgs):
 
     out = []
     for m in msgs:
+        deleted = m.deleted_at is not None
         u = users.get(m.user_id)
         r = replies.get(m.reply_to_id)
         ru = users.get(r.user_id) if r else None
+
+        reply_obj = None
+        if r:
+            if r.deleted_at:
+                rbody, rdel = "", True
+            else:
+                rbody, rdel = (r.body or "")[:120], False
+                if not rbody:
+                    ra = _attachment_dict(r)
+                    if ra:
+                        rbody = _attachment_label(ra["is_image"], ra["name"])
+            reply_obj = {
+                "id": r.id,
+                "user_id": r.user_id,
+                "name": ru.name if ru else "Unknown",
+                "body": rbody,
+                "deleted": rdel,
+            }
+
         out.append({
             "id": m.id,
             "user_id": m.user_id,
             "name": u.name if u else "Unknown",
-            "body": m.body,
-            "created_at": m.created_at.isoformat() + "+00:00",
-            "reply_to": {
-                "id": r.id,
-                "user_id": r.user_id,
-                "name": ru.name if ru else "Unknown",
-                "body": r.body[:120],
-            } if r else None,
-            "mentions": [
+            "body": "" if deleted else m.body,
+            "created_at": _iso_utc(m.created_at),
+            "edited_at": None if deleted else _iso_utc(m.edited_at),
+            "deleted_at": _iso_utc(m.deleted_at),
+            "attachment": _attachment_dict(m),
+            "reply_to": reply_obj,
+            "mentions": [] if deleted else [
                 {"user_id": i, "name": users[i].name}
                 for i in parsed[m.id] if i in users
             ],
         })
     return out
-
-# In-memory presence: { team_id: { user_id: last_poll_timestamp } }
-TEAM_PRESENCE = {}
-PRESENCE_TTL_SECONDS = 8  # poll is every 3s, so 8s tolerates a slow request
-
-def is_viewing_chat(team_id, user_id):
-    ts = TEAM_PRESENCE.get(team_id, {}).get(user_id)
-    return ts is not None and (time.time() - ts) < PRESENCE_TTL_SECONDS
 
 # In-memory typing state: { team_id: { user_id: (name, expiry_timestamp) } }
 TEAM_TYPING_STATE = {}
@@ -531,66 +684,102 @@ def set_team_typing(team_id):
 
     return jsonify({"status": "success"}), 200
 
+@app.route('/api/teams/<int:team_id>/presence', methods=['POST'])
+def set_team_presence(team_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    membership = TeamMember.query.filter_by(
+        team_id=team_id, user_id=session['user_id']
+    ).first()
+    if not membership:
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    if data.get('active'):
+        mark_presence(team_id, session['user_id'])
+    else:
+        clear_presence(team_id, session['user_id'])
+    return jsonify({"status": "success"}), 200
+
 @app.route('/api/teams/<int:team_id>/messages', methods=['GET'])
 def get_team_messages(team_id):
-    """Poll every 3s. Returns messages after `since` (id) if given, plus active typers and online members."""
+    """
+    Modes:
+      (none)        -> latest page (initial load)
+      ?before=<id>  -> older page
+      ?since=<id>   -> new messages, plus edited/deleted ones since ?sync=<server_utc>
+    """
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
-    # Must be a member of this team
     membership = TeamMember.query.filter_by(
         user_id=session['user_id'], team_id=team_id
     ).first()
     if not membership:
         return jsonify({"error": "You are not in this team"}), 403
 
-    # ✅ Presence: this user has the chat open right now
-    now_ts = time.time()
-    presence = TEAM_PRESENCE.setdefault(team_id, {})
-    presence[session['user_id']] = now_ts
+    server_utc = datetime.utcnow()           # taken BEFORE queries so no change is missed
+    mark_presence(team_id, session['user_id'])
 
-    since_id = request.args.get('since', type=int)  # optional incremental fetch
+    since_id = request.args.get('since', type=int)
+    before_id = request.args.get('before', type=int)
+    page = min(max(request.args.get('limit', 60, type=int), 1), 100)
+    sync_dt = _parse_utc(request.args.get('sync'))
 
-    q = TeamMessage.query.filter_by(team_id=team_id)
-    if since_id:
-        q = q.filter(TeamMessage.id > since_id)
+    has_more = False
+    changed = []
 
-    msgs = q.order_by(TeamMessage.id.asc()).limit(200).all()
+    if before_id:
+        rows = (TeamMessage.query
+                .filter(TeamMessage.team_id == team_id, TeamMessage.id < before_id)
+                .order_by(TeamMessage.id.desc()).limit(page + 1).all())
+        has_more = len(rows) > page
+        msgs = list(reversed(rows[:page]))
+    elif since_id is not None:
+        msgs = (TeamMessage.query
+                .filter(TeamMessage.team_id == team_id, TeamMessage.id > since_id)
+                .order_by(TeamMessage.id.asc()).limit(200).all())
+        if sync_dt:
+            ch = (TeamMessage.query
+                  .filter(TeamMessage.team_id == team_id,
+                          TeamMessage.id <= since_id,
+                          or_(TeamMessage.edited_at > sync_dt,
+                              TeamMessage.deleted_at > sync_dt))
+                  .order_by(TeamMessage.id.asc()).limit(200).all())
+            changed = _serialize_messages(ch)
+    else:
+        rows = (TeamMessage.query.filter_by(team_id=team_id)
+                .order_by(TeamMessage.id.desc()).limit(page + 1).all())
+        has_more = len(rows) > page
+        msgs = list(reversed(rows[:page]))
+
     out = _serialize_messages(msgs)
 
-    # Collect & prune expired typing indicators
+    # typing indicators
+    now_ts = time.time()
     bucket = TEAM_TYPING_STATE.get(team_id, {})
-    typing_users = []
-    expired_ids = []
-
+    typing_users, expired_ids = [], []
     for uid, (uname, exp) in bucket.items():
         if exp > now_ts:
             typing_users.append({"user_id": uid, "name": uname})
         else:
             expired_ids.append(uid)
-
     for uid in expired_ids:
         bucket.pop(uid, None)
 
-    # ✅ Online members = polled within the last PRESENCE_TTL_SECONDS
-    online_ids = [
-        uid for uid, ts in list(presence.items())
-        if now_ts - ts < PRESENCE_TTL_SECONDS
-    ]
-    # tidy very old entries
-    for uid in [u for u, ts in list(presence.items()) if now_ts - ts > 120]:
-        presence.pop(uid, None)
+    online_ids = sorted(viewing_user_ids(team_id))
 
     return jsonify({
         "status": "success",
         "messages": out,
+        "changed": changed,
+        "has_more": has_more,
         "typing_users": typing_users,
         "online_user_ids": online_ids,
         "online_count": len(online_ids),
+        "server_utc": server_utc.isoformat(),
         "server_now": now_ist_naive().isoformat() + "+05:30",
     }), 200
-
-import re
 
 def build_push_preview(text, limit=100):
     """Single-line, trimmed preview for a notification body."""
@@ -604,25 +793,38 @@ def post_team_message(team_id):
 
     sender_id = session['user_id']
 
-    membership = TeamMember.query.filter_by(
-        user_id=sender_id,
-        team_id=team_id
-    ).first()
-
+    membership = TeamMember.query.filter_by(user_id=sender_id, team_id=team_id).first()
     if not membership:
         return jsonify({"error": "You are not in this team"}), 403
 
-    data = request.get_json(silent=True) or {}
-    body = (data.get('body') or '').strip()
+    # JSON (text only) or multipart (text + file)
+    upload = None
+    if (request.mimetype or '').startswith('multipart/'):
+        form = request.form
+        body = (form.get('body') or '').strip()
+        reply_to_id = form.get('reply_to_id')
+        try:
+            raw_mentions = json.loads(form.get('mentions') or '[]')
+        except (ValueError, TypeError):
+            raw_mentions = []
+        upload = request.files.get('file')
+        if upload is not None and not upload.filename:
+            upload = None
+    else:
+        data = request.get_json(silent=True) or {}
+        body = (data.get('body') or '').strip()
+        reply_to_id = data.get('reply_to_id')
+        raw_mentions = data.get('mentions') or []
 
-    if not body:
+    if reply_to_id in ('', 'null', 'undefined'):
+        reply_to_id = None
+
+    if not body and upload is None:
         return jsonify({"error": "Message cannot be empty"}), 400
-
     if len(body) > 1000:
         return jsonify({"error": "Message too long (max 1000 chars)"}), 400
 
     # ── Reply target (must be in the same team) ──
-    reply_to_id = data.get('reply_to_id')
     if reply_to_id is not None:
         try:
             reply_to_id = int(reply_to_id)
@@ -631,18 +833,13 @@ def post_team_message(team_id):
         if not TeamMessage.query.filter_by(id=reply_to_id, team_id=team_id).first():
             return jsonify({"error": "Reply target not found"}), 400
 
-    # ── Mentions (only real members of this team, never the sender) ──
-    mention_ids = []
-    raw_mentions = data.get('mentions') or []
-    if isinstance(raw_mentions, list):
-        member_ids = {m.user_id for m in TeamMember.query.filter_by(team_id=team_id).all()}
-        for x in raw_mentions:
-            try:
-                i = int(x)
-            except (TypeError, ValueError):
-                continue
-            if i in member_ids and i != sender_id and i not in mention_ids:
-                mention_ids.append(i)
+    mention_ids = _clean_mentions(team_id, raw_mentions, sender_id)
+
+    attachment = None
+    if upload is not None:
+        attachment, err = _save_chat_upload(upload)
+        if err:
+            return jsonify({"error": err}), 400
 
     try:
         msg = TeamMessage(
@@ -651,30 +848,30 @@ def post_team_message(team_id):
             body=body,
             reply_to_id=reply_to_id,
             mentions=json.dumps(mention_ids) if mention_ids else None,
+            attachment_file=attachment["file"] if attachment else None,
+            attachment_name=attachment["name"] if attachment else None,
+            attachment_mime=attachment["mime"] if attachment else None,
+            attachment_size=attachment["size"] if attachment else None,
         )
-
         db.session.add(msg)
         db.session.commit()
 
-        # ✅ Clear sender's typing status immediately once the message is saved
         TEAM_TYPING_STATE.get(team_id, {}).pop(sender_id, None)
-
         u = User.query.get(sender_id)
 
         # -----------------------------------------
         # SEND PUSH NOTIFICATIONS TO OTHER MEMBERS
         # -----------------------------------------
-
         try:
-            # Get all team members except the sender
             team_members = TeamMember.query.filter(
                 TeamMember.team_id == team_id,
                 TeamMember.user_id != sender_id
             ).all()
 
+            viewing = viewing_user_ids(team_id)
             all_recipient_ids = [member.user_id for member in team_members]
-            recipient_ids = [i for i in all_recipient_ids if not is_viewing_chat(team_id, i)]
-            skipped = [i for i in all_recipient_ids if i not in recipient_ids]
+            recipient_ids = [i for i in all_recipient_ids if i not in viewing]
+            skipped = [i for i in all_recipient_ids if i in viewing]
 
             sender_name = u.name if u else "A team member"
             team = Team.query.get(team_id)
@@ -688,13 +885,17 @@ def post_team_message(team_id):
             mentioned = set(mention_ids)
             normal_tokens = tokens_for([i for i in recipient_ids if i not in mentioned])
             mention_tokens = tokens_for([i for i in recipient_ids if i in mentioned])
-            
+
             print(f"[push] team={team_id} notify={recipient_ids} skipped_viewing={skipped} "
                   f"normal={len(normal_tokens)} mention={len(mention_tokens)}")
-            
+
             payload = {"screen": "team-chat", "team_id": team_id, "message_id": msg.id}
 
-            preview = build_push_preview(body, limit=120)
+            preview_src = body
+            if attachment:
+                label = _attachment_label(attachment["is_image"], attachment["name"])
+                preview_src = f"{label}: {body}" if body else label
+            preview = build_push_preview(preview_src, limit=120)
             reply_mark = "↩️ " if reply_to_id else ""
 
             if normal_tokens:
@@ -704,7 +905,6 @@ def post_team_message(team_id):
                     body=f"{sender_name}: {reply_mark}{preview}",
                     data_payload=payload,
                 )
-
             if mention_tokens:
                 send_expo_push(
                     mention_tokens,
@@ -712,9 +912,7 @@ def post_team_message(team_id):
                     body=f"{sender_name} mentioned you: {preview}",
                     data_payload=payload,
                 )
-
         except Exception as push_error:
-            # A notification failure must not undo the saved message
             print(f"❌ Team chat push notification failed: {push_error}")
 
         return jsonify({
@@ -724,11 +922,97 @@ def post_team_message(team_id):
 
     except Exception as e:
         db.session.rollback()
+        if attachment:
+            _remove_chat_file(attachment["file"])
         print(f"❌ Post team message failed: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Send failed"
-        }), 500
+        return jsonify({"status": "error", "message": "Send failed"}), 500
+
+@app.route('/api/teams/<int:team_id>/messages/<int:message_id>', methods=['PUT'])
+def edit_team_message(team_id, message_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    uid = session['user_id']
+
+    if not TeamMember.query.filter_by(user_id=uid, team_id=team_id).first():
+        return jsonify({"error": "You are not in this team"}), 403
+
+    msg = TeamMessage.query.filter_by(id=message_id, team_id=team_id).first()
+    if not msg:
+        return jsonify({"error": "Message not found"}), 404
+    if msg.user_id != uid:
+        return jsonify({"error": "You can only edit your own messages"}), 403
+    if msg.deleted_at:
+        return jsonify({"error": "This message was deleted"}), 400
+
+    data = request.get_json(silent=True) or {}
+    body = (data.get('body') or '').strip()
+    if not body and not msg.attachment_file:
+        return jsonify({"error": "Message cannot be empty"}), 400
+    if len(body) > 1000:
+        return jsonify({"error": "Message too long (max 1000 chars)"}), 400
+
+    try:
+        if body != (msg.body or ''):
+            msg.body = body
+            if isinstance(data.get('mentions'), list):
+                ids = _clean_mentions(team_id, data['mentions'], uid)
+                msg.mentions = json.dumps(ids) if ids else None
+            msg.edited_at = datetime.utcnow()
+            db.session.commit()
+        return jsonify({"status": "success", "message": _serialize_messages([msg])[0]}), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Edit message failed: {e}")
+        return jsonify({"error": "Edit failed"}), 500
+
+@app.route('/api/teams/<int:team_id>/messages/<int:message_id>', methods=['DELETE'])
+def delete_team_message(team_id, message_id):
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    uid = session['user_id']
+
+    if not TeamMember.query.filter_by(user_id=uid, team_id=team_id).first():
+        return jsonify({"error": "You are not in this team"}), 403
+
+    msg = TeamMessage.query.filter_by(id=message_id, team_id=team_id).first()
+    if not msg:
+        return jsonify({"error": "Message not found"}), 404
+    if msg.user_id != uid:
+        return jsonify({"error": "You can only delete your own messages"}), 403
+
+    try:
+        if not msg.deleted_at:
+            old_file = msg.attachment_file
+            msg.deleted_at = datetime.utcnow()
+            msg.body = ""
+            msg.mentions = None
+            msg.attachment_file = None
+            msg.attachment_name = None
+            msg.attachment_mime = None
+            msg.attachment_size = None
+            db.session.commit()
+            _remove_chat_file(old_file)
+        return jsonify({"status": "success", "message": _serialize_messages([msg])[0]}), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Delete message failed: {e}")
+        return jsonify({"error": "Delete failed"}), 500
+
+@app.route('/api/chat-files/<filename>')
+def get_chat_file(filename):
+    """Files use unguessable random names, so the link works in Image/browser without cookies."""
+    if not STORED_NAME_RE.match(filename):
+        abort(404)
+    if not os.path.isfile(os.path.join(UPLOAD_DIR, filename)):
+        abort(404)
+    as_dl = request.args.get('dl') == '1'
+    dl_name = secure_filename(request.args.get('name', '')) or None
+    return send_from_directory(
+        UPLOAD_DIR, filename,
+        as_attachment=as_dl,
+        download_name=dl_name if as_dl else None,
+        max_age=86400,
+    )
     
 @app.route('/join-team')
 def join_team_redirect():
@@ -784,8 +1068,8 @@ def rename_team():
 def _build_user_history_payload(target_user: User):
     """Shared history payload for both admin & team-admin views."""
     now = now_ist_naive()
-    ONLINE_WINDOW = timedelta(minutes=15)
-
+    ONLINE_WINDOW = timedelta(seconds=15)
+    
     # ✅ LOGIC FIX: Check is_signed_in FIRST
     if target_user.is_signed_in is False:
         if target_user.last_status_change:
