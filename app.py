@@ -523,51 +523,6 @@ def set_team_typing(team_id):
 
     return jsonify({"status": "success"}), 200
 
-@app.route('/api/teams/<int:team_id>/messages', methods=['GET'])
-def get_team_messages(team_id):
-    """Poll every 3s. Returns messages after `since` (id) if given, plus active typers."""
-    if 'user_id' not in session:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    # Must be a member of this team
-    membership = TeamMember.query.filter_by(
-        user_id=session['user_id'], team_id=team_id
-    ).first()
-    if not membership:
-        return jsonify({"error": "You are not in this team"}), 403
-
-    since_id = request.args.get('since', type=int)  # optional incremental fetch
-
-    q = TeamMessage.query.filter_by(team_id=team_id)
-    if since_id:
-        q = q.filter(TeamMessage.id > since_id)
-
-    msgs = q.order_by(TeamMessage.id.asc()).limit(200).all()
-    out = _serialize_messages(msgs)
-
-    # Collect & prune expired typing indicators
-    now_ts = time.time()
-    bucket = TEAM_TYPING_STATE.get(team_id, {})
-    typing_users = []
-    expired_ids = []
-
-    for uid, (uname, exp) in bucket.items():
-        if exp > now_ts:
-            typing_users.append({"user_id": uid, "name": uname})
-        else:
-            expired_ids.append(uid)
-
-    for uid in expired_ids:
-        bucket.pop(uid, None)
-
-    return jsonify({
-        "status": "success",
-        "messages": out,
-        "typing_users": typing_users,
-        "server_now": now_ist_naive().isoformat() + "+05:30",
-    }), 200
-
-
 @app.route('/api/teams/<int:team_id>/messages', methods=['POST'])
 def post_team_message(team_id):
     if 'user_id' not in session:
@@ -644,6 +599,7 @@ def post_team_message(team_id):
             ).all()
 
             recipient_ids = [member.user_id for member in team_members]
+            print(f"[push] team={team_id} sender={sender_id} recipients={recipient_ids}")  # ADDED
 
             # Get Expo push tokens of those members
             recipient_tokens = [
@@ -664,19 +620,26 @@ def post_team_message(team_id):
             mentioned = set(mention_ids)
             normal_tokens = tokens_for([i for i in recipient_ids if i not in mentioned])
             mention_tokens = tokens_for([i for i in recipient_ids if i in mentioned])
+            print(f"[push] normal_tokens={len(normal_tokens)} mention_tokens={len(mention_tokens)}")  # ADDED
+            print(f"[push] sample={(normal_tokens or mention_tokens or ['NONE'])[0][:30]}")  # ADDED
+
             payload = {"screen": "team-chat", "team_id": team_id, "message_id": msg.id}
             team_label = team.name if team else 'Team'
 
             if normal_tokens:
-                send_expo_push(normal_tokens, title=f"{team_label} · {sender_name}",
-                               body=body[:150], data_payload=payload)
+                ok = send_expo_push(normal_tokens, title=f"{team_label} · {sender_name}",  # CHANGED: ok =
+                                    body=body[:150], data_payload=payload)
+                print(f"[push] normal send result={ok}")  # ADDED
             if mention_tokens:
-                send_expo_push(mention_tokens, title=f"{team_label} · {sender_name} mentioned you",
-                               body=body[:150], data_payload=payload)
+                ok = send_expo_push(mention_tokens, title=f"{team_label} · {sender_name} mentioned you",  # CHANGED: ok =
+                                    body=body[:150], data_payload=payload)
+                print(f"[push] mention send result={ok}")  # ADDED
 
         except Exception as push_error:
             # A notification failure must not undo the saved message
+            import traceback  # ADDED
             print(f"❌ Team chat push notification failed: {push_error}")
+            traceback.print_exc()  # ADDED
 
         return jsonify({
             "status": "success",
