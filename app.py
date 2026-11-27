@@ -3436,9 +3436,12 @@ def public_stats():
         return jsonify({"status": "error", "error": str(e)}), 500
 """
 
+from sqlalchemy import func # Ensure this is imported at the top of your app.py
+
 @app.route('/api/public/stats', methods=['GET'])
 def public_stats():
     try:
+        # 1. Existing counts
         total_users = db.session.query(User).count()
         total_steps = db.session.query(
             func.coalesce(func.sum(StepLog.walking_steps), 0) +
@@ -3446,23 +3449,34 @@ def public_stats():
         ).scalar() or 0
         tasks_handled = db.session.query(Todo).count()
 
+        # 2. New counts: Total Teams
+        total_teams = db.session.query(Team).count()
+
+        # 3. New counts: Total API Calls (from the AppStat table we created)
+        stat = AppStat.query.filter_by(key='total_api_calls').first()
+        total_api_calls = stat.value if stat else 0
+
         return jsonify({
             "status": "success",
-            # Raw values (unchanged — existing clients keep working)
+            # Raw values
             "total_users": int(total_users),
             "total_steps": int(total_steps),
             "tasks_handled": int(tasks_handled),
+            "total_teams": int(total_teams),           # ✅ Added
+            "total_api_calls": int(total_api_calls),   # ✅ Added
             # ✅ Pre-formatted display strings
             "display": {
                 "total_users":   format_compact_number(total_users),
                 "total_steps":   format_compact_number(total_steps),
                 "tasks_handled": format_compact_number(tasks_handled),
+                "total_teams":   format_compact_number(total_teams),      # ✅ Added
+                "total_api_calls": format_compact_number(total_api_calls), # ✅ Added
             },
         }), 200
     except Exception as e:
         print(f"❌ Public stats error: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
-
+    
 # ======================
 # INITIALIZATION
 # ======================
