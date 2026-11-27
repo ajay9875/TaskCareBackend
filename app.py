@@ -67,8 +67,8 @@ app.config.update(
 
 #app.config['MAX_CONTENT_LENGTH'] = 12 * 1024 * 1024  # 10 MB file + form overhead
 # TEMPORARY: effectively no limit for debugging. Put back to 12 MB when done.
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024   # 200 MB
-
+# 10 MB file + ~2 MB for multipart/form overhead
+app.config['MAX_CONTENT_LENGTH'] = 12 * 1024 * 1024
 db = SQLAlchemy(app)
 
 migrate = Migrate(app, db)  # 🚀 Initialize Migrate with your app and db
@@ -82,6 +82,12 @@ IST = ZoneInfo("Asia/Kolkata")
 
 # In app.py, add this below your StepSyncEvent model
 import secrets
+
+class AppStat(db.Model):
+    __tablename__ = 'app_stat'
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(50), unique=True, nullable=False)
+    value = db.Column(db.Integer, default=0)
 
 class Team(db.Model):
     __tablename__ = 'team'
@@ -315,16 +321,16 @@ def get_festival():
 # NUMBER FORMATTING HELPERS
 # ======================
 
-def format_compact_number(n, decimals=1):
+def format_compact_number(n, decimals=2):
     """
     Abbreviate large integers for display.
 
     Examples:
         999            -> "999"
         1_500          -> "1.5K"
-        32_315         -> "32.3K"
+        32_315         -> "32.32K"
         1_000_000      -> "1M"
-        1_100_000      -> "1.1M"
+        1_110_000      -> "1.11M"
         1_500_000_000  -> "1.5B"
         2_000_000_000_000 -> "2T"
 
@@ -346,7 +352,7 @@ def format_compact_number(n, decimals=1):
     ):
         if n >= threshold:
             value = n / threshold
-            # Trim trailing .0 so 1.0M -> "1M", but keep 1.5M
+            # Trim trailing .0 so 1.0M -> "1M", but keep 1.11M
             formatted = f"{value:.{decimals}f}".rstrip("0").rstrip(".")
             return f"{sign}{formatted}{suffix}"
 
@@ -382,6 +388,22 @@ def format_metric(n, decimals=1):
         "display": f"{rounded:.2f}",
         "full":    f"{rounded:.2f}",
     }
+
+@app.before_request
+def _track_api_calls():
+    # We only want to track /api/ routes to avoid counting static files or page loads
+    if request.path.startswith('/api/') and request.method != 'OPTIONS':
+        try:
+            stat = AppStat.query.filter_by(key='total_api_calls').first()
+            if not stat:
+                stat = AppStat(key='total_api_calls', value=1)
+                db.session.add(stat)
+            else:
+                stat.value += 1
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Failed to track API call: {e}")
 
 @app.before_request
 def _touch_last_seen():
