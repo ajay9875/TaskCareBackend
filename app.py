@@ -65,7 +65,9 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=400)   # 👈 Maximum browser limit
 )
 
-app.config['MAX_CONTENT_LENGTH'] = 12 * 1024 * 1024  # 10 MB file + form overhead
+#app.config['MAX_CONTENT_LENGTH'] = 12 * 1024 * 1024  # 10 MB file + form overhead
+# TEMPORARY: effectively no limit for debugging. Put back to 12 MB when done.
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024   # 200 MB
 
 db = SQLAlchemy(app)
 
@@ -122,7 +124,7 @@ class TeamPresence(db.Model):
     user_id = db.Column(db.Integer, nullable=False, index=True)
     last_seen = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('team_id', 'user_id', name='_team_presence_uc'),)
-    
+
 class PushToken(db.Model):
     __tablename__ = 'push_token'
     id = db.Column(db.Integer, primary_key=True)
@@ -163,7 +165,7 @@ class Todo(db.Model):
     date_updated = db.Column(db.Date, nullable=True)
     is_completed = db.Column(db.Boolean, default=False, nullable=False)
     # ✅ NEW: Soft delete flag
-    is_deleted = db.Column(db.Boolean, default=False, nullable=False) 
+    is_deleted = db.Column(db.Boolean, default=False, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 # ======================
@@ -195,17 +197,40 @@ _b2_endpoint = (os.getenv('BACKBLAZE_ENDPOINT') or '').strip()
 if _b2_endpoint and not _b2_endpoint.startswith('http'):
     _b2_endpoint = 'https://' + _b2_endpoint
 
-s3 = boto3.client(
-    's3',
-    endpoint_url=_b2_endpoint,
-    aws_access_key_id=os.getenv('BACKBLAZE_KEY_ID'),
-    aws_secret_access_key=os.getenv('BACKBLAZE_APPLICATION_KEY'),
-    region_name=os.getenv('BACKBLAZE_REGION'),
-    config=Config(signature_version='s3v4', connect_timeout=10, read_timeout=30,
-                  retries={'max_attempts': 2}),
-)
+def _make_s3():
+    base = dict(
+        signature_version='s3v4',
+        s3={'addressing_style': 'path'},          # same as your Django code
+        connect_timeout=10, read_timeout=30,
+        retries={'max_attempts': 2},
+    )
+    try:   # newer botocore only
+        cfg = Config(**base,
+                     request_checksum_calculation='when_required',
+                     response_checksum_validation='when_required')
+    except TypeError:
+        cfg = Config(**base)
+    return boto3.client(
+        's3',
+        endpoint_url=_b2_endpoint,
+        aws_access_key_id=os.getenv('BACKBLAZE_KEY_ID'),
+        aws_secret_access_key=os.getenv('BACKBLAZE_APPLICATION_KEY'),
+        region_name=os.getenv('BACKBLAZE_REGION'),
+        config=cfg,
+    )
+
+s3 = _make_s3()
 B2_PREFIX = 'chat/'
-SIGNED_URL_TTL = 3600  # 1 hour
+SIGNED_URL_TTL = 3600
+
+@app.before_request
+def _log_options():
+    if request.method == 'OPTIONS':
+        print(f"[OPTIONS] {request.path} "
+              f"origin={request.headers.get('Origin')!r} "
+              f"acrm={request.headers.get('Access-Control-Request-Method')!r} "
+              f"acrh={request.headers.get('Access-Control-Request-Headers')!r}",
+              flush=True)
 
 @app.route('/api/admin/b2-check', methods=['GET'])
 def b2_check():
@@ -235,6 +260,37 @@ def b2_check():
         report["error"] = f"{type(e).__name__}: {e}"
         return jsonify(report), 500
 
+@app.route('/api/b2-test/<secret_code>')
+def b2_test(secret_code):
+    import hmac
+    expected = (os.getenv("REPORT_SECRET") or "").strip()
+    if not expected or not hmac.compare_digest(secret_code.strip(), expected):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    report = {
+        "bucket": B2_BUCKET,
+        "endpoint": _b2_endpoint,
+        "region": os.getenv('BACKBLAZE_REGION'),
+        "key_id_set": bool(os.getenv('BACKBLAZE_KEY_ID')),
+        "app_key_set": bool(os.getenv('BACKBLAZE_APPLICATION_KEY')),
+    }
+    key = f"{B2_PREFIX}_healthcheck_{secrets.token_hex(4)}.txt"
+    t0 = time.time()
+    try:
+        s3.put_object(Bucket=B2_BUCKET, Key=key, Body=b"ok")
+        report["write"] = True
+        report["read"] = s3.get_object(Bucket=B2_BUCKET, Key=key)["Body"].read() == b"ok"
+        s3.delete_object(Bucket=B2_BUCKET, Key=key)
+        report["delete"] = True
+        report["status"] = "connected"
+        code = 200
+    except Exception as e:
+        report["status"] = "failed"
+        report["error"] = f"{type(e).__name__}: {e}"
+        code = 500
+    report["seconds"] = round(time.time() - t0, 2)
+    return jsonify(report), code
+
 def now_ist_naive() -> datetime:
     """IST clock time, no tzinfo — safe for MySQL DATETIME columns and delta math."""
     return datetime.now(IST).replace(tzinfo=None)
@@ -252,7 +308,7 @@ def get_festival():
         "name": fest_name,
         "message": fest_message,
         # Host the GIF anywhere (S3, Imgur, your server's static folder, etc.)
-        "gif_url": formatted_gif_url 
+        "gif_url": formatted_gif_url
     }), 200
 
 # ======================
@@ -361,7 +417,7 @@ def _humanize(delta: timedelta) -> str:
 def verify_super_admin_pin():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     current = User.query.get(session['user_id'])
     if not _is_admin(current):
         return jsonify({"error": "Forbidden"}), 403
@@ -383,7 +439,7 @@ def superadmin_list_teams():
 
     teams = Team.query.order_by(Team.id.desc()).all()
     out = []
-    now = now_ist_naive()                    
+    now = now_ist_naive()
     ONLINE_WINDOW = timedelta(minutes=15)
     current_user_id = session['user_id']
 
@@ -407,7 +463,7 @@ def superadmin_list_teams():
             u = User.query.get(m.user_id)
             if not u:
                 continue
-            
+
             # Build the members array so the frontend can de-dupe properly
             members_data.append({
                 "user_id": u.id,
@@ -421,7 +477,7 @@ def superadmin_list_teams():
                 signed_in_count += 1
             if u.last_seen and (now - u.last_seen) <= ONLINE_WINDOW:
                 online_count += 1
-                
+
             if u.id == current_user_id and m.role == 'admin':
                 is_admin_flag = True
 
@@ -432,8 +488,8 @@ def superadmin_list_teams():
             "created_by": admin.name if admin else "Unknown",
             "created_at_label": age,
             "member_count": len(t.members),
-            "online_member_count": online_count,           
-            "signed_in_member_count": signed_in_count,     
+            "online_member_count": online_count,
+            "signed_in_member_count": signed_in_count,
             "is_admin": is_admin_flag, # ✅ Added this
             "members": members_data,   # ✅ Added this so stats calculate correctly
         })
@@ -471,26 +527,26 @@ MAX_TEAMS_PER_USER = 10
 def get_my_team():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     # Get ALL memberships for this user
     memberships = TeamMember.query.filter_by(user_id=session['user_id']).all()
     if not memberships:
         return jsonify({"status": "success", "teams": []}), 200
-    
+
     today = datetime.now(IST).date()
     teams_data = []
-    
+
     for membership in memberships:
         team = Team.query.get(membership.team_id)
         if not team:
             continue
-            
+
         members_data = []
         for m in team.members:
             user = User.query.get(m.user_id)
             log = StepLog.query.filter_by(user_id=user.id, date=today).first()
             steps = (log.walking_steps or 0) + (log.treadmill_steps or 0) if log else 0
-            
+
             members_data.append({
                 "user_id": user.id,
                 "name": user.name,
@@ -499,7 +555,7 @@ def get_my_team():
                 "is_signed_in": user.is_signed_in,
                 "last_seen": (user.last_seen.isoformat() + "+05:30") if user.last_seen else None,
             })
-            
+
         teams_data.append({
             "id": team.id,
             "name": team.name,
@@ -508,7 +564,7 @@ def get_my_team():
             "current_user_id": session['user_id'],
             "members": members_data
         })
-        
+
     return jsonify({"status": "success", "teams": teams_data}), 200
 
 from urllib.parse import quote  # add at top of file
@@ -568,6 +624,8 @@ def _remove_chat_file(stored):
         except Exception as e:
             print(f"❌ B2 delete failed: {e}")
 
+import mimetypes
+
 def _save_chat_upload(file_storage):
     """Returns (info, error)."""
     original = file_storage.filename or ''
@@ -578,20 +636,27 @@ def _save_chat_upload(file_storage):
     if ext not in ALLOWED_EXTS:
         return None, "This file type is not allowed"
 
-    stream = file_storage.stream
-    stream.seek(0, os.SEEK_END)
-    size = stream.tell()
-    stream.seek(0)
+    # Read the whole file into memory (max 10 MB) so B2 receives plain bytes
+    import io
+
+    data = file_storage.read()
+    size = len(data)
     if size == 0:
         return None, "The file is empty"
     if size > MAX_UPLOAD_BYTES:
         return None, "File too large (max 10 MB)"
 
+    # DIAGNOSTIC: shows whether the app sent a real file
+    print(f"[upload] name={original!r} ext={ext} size={size} head={data[:12].hex()}", flush=True)
+
+    ctype = mimetypes.guess_type(f"x.{ext}")[0] or mime or 'application/octet-stream'
     stored = f"{secrets.token_hex(16)}.{ext}"
     try:
         s3.upload_fileobj(
-            stream, B2_BUCKET, B2_PREFIX + stored,
-            ExtraArgs={'ContentType': mime or 'application/octet-stream'},
+            io.BytesIO(data),
+            B2_BUCKET,
+            B2_PREFIX + stored,
+            ExtraArgs={'ContentType': ctype},
         )
     except Exception as e:
         print(f"❌ B2 upload failed: {e}")
@@ -601,7 +666,7 @@ def _save_chat_upload(file_storage):
     return {
         "file": stored,
         "name": display[:200],
-        "mime": mime[:100] or None,
+        "mime": (ctype or mime)[:100] or None,
         "size": size,
         "is_image": ext in IMAGE_EXTS,
     }, None
@@ -847,6 +912,12 @@ def post_team_message(team_id):
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
+    import time
+    print(f"[HIT] {time.time():.3f} POST /teams/{team_id}/messages "
+          f"ct={request.content_type!r} cl={request.content_length} "
+          f"te={request.headers.get('Transfer-Encoding')!r}",
+          flush=True)
+
     sender_id = session['user_id']
 
     membership = TeamMember.query.filter_by(user_id=sender_id, team_id=team_id).first()
@@ -1054,31 +1125,42 @@ def delete_team_message(team_id, message_id):
         print(f"❌ Delete message failed: {e}")
         return jsonify({"error": "Delete failed"}), 500
 
+from flask import jsonify
+
 @app.route('/api/chat-files/<filename>')
 def get_chat_file(filename):
     if not STORED_NAME_RE.match(filename):
         abort(404)
 
-    params = {'Bucket': B2_BUCKET, 'Key': B2_PREFIX + filename}
+    ext = filename.rsplit('.', 1)[-1].lower()
+    params = {
+        'Bucket': B2_BUCKET,
+        'Key': B2_PREFIX + filename,
+        'ResponseContentType': mimetypes.guess_type(filename)[0] or 'application/octet-stream',
+        'ResponseContentDisposition': 'inline',
+    }
     if request.args.get('dl') == '1':
         dl_name = secure_filename(request.args.get('name', '')) or filename
         params['ResponseContentDisposition'] = f'attachment; filename="{dl_name}"'
-
     try:
-        url = s3.generate_presigned_url('get_object', Params=params,
-                                        ExpiresIn=SIGNED_URL_TTL)
+        url = s3.generate_presigned_url('get_object', Params=params, ExpiresIn=SIGNED_URL_TTL)
     except Exception as e:
         print(f"❌ presign failed: {e}")
         abort(404)
+
+    # If the client requests JSON (we will update the frontend to do this)
+    if request.args.get('json') == '1':
+        return jsonify({"url": url}), 200
+
     return redirect(url, code=302)
-    
+
 @app.route('/join-team')
 def join_team_redirect():
     code = request.args.get('code', '').strip().upper()
     safe_code = quote(code, safe='')
     # Modify to teams (corresponding to app/teams/index.tsx)
     return redirect(f"taskcaremobile://teams?prefill={safe_code}")
- 
+
 @app.route('/api/teams/rename', methods=['POST'])
 def rename_team():
     if 'user_id' not in session:
@@ -1127,7 +1209,7 @@ def _build_user_history_payload(target_user: User):
     """Shared history payload for both admin & team-admin views."""
     now = now_ist_naive()
     ONLINE_WINDOW = timedelta(seconds=15)
-    
+
     # ✅ LOGIC FIX: Check is_signed_in FIRST
     if target_user.is_signed_in is False:
         if target_user.last_status_change:
@@ -1265,7 +1347,7 @@ def team_member_history(member_id):
 def create_team():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    
+
     # ✅ Enforce the 10-team limit
     team_count = TeamMember.query.filter_by(user_id=session['user_id']).count()
     if team_count >= MAX_TEAMS_PER_USER:
@@ -1275,15 +1357,15 @@ def create_team():
     name = data.get('name', '').strip()
     if not name:
         return jsonify({"error": "Team name is required"}), 400
-        
+
     try:
         new_team = Team(name=name, created_by=session['user_id'])
         db.session.add(new_team)
         db.session.flush()
-        
+
         admin_member = TeamMember(team_id=new_team.id, user_id=session['user_id'], role='admin')
         db.session.add(admin_member)
-        
+
         db.session.commit()
         return jsonify({"status": "success", "message": "Team created!", "join_code": new_team.join_code}), 201
     except Exception as e:
@@ -1358,17 +1440,17 @@ def remove_team_member(member_id):
 def join_team():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-        
+
     data = request.get_json()
     code = data.get('code', '').strip().upper()
-    
+
     if not code:
         return jsonify({"error": "Team code is required"}), 400
-        
+
     team = Team.query.filter_by(join_code=code).first()
     if not team:
         return jsonify({"error": "Invalid team code"}), 404
-        
+
     # Check if already in THIS specific team
     existing = TeamMember.query.filter_by(user_id=session['user_id'], team_id=team.id).first()
     if existing:
@@ -1378,7 +1460,7 @@ def join_team():
     team_count = TeamMember.query.filter_by(user_id=session['user_id']).count()
     if team_count >= MAX_TEAMS_PER_USER:
         return jsonify({"error": "You can only be in a maximum of 10 teams. Please contact admin."}), 403
-        
+
     try:
         new_member = TeamMember(team_id=team.id, user_id=session['user_id'], role='member')
         db.session.add(new_member)
@@ -1740,10 +1822,10 @@ def admin_list_users():
                 change_delta = now - u.last_status_change
                 return ("signed_out", f"Signed out · {_humanize(change_delta)} ago")
             return ("signed_out", "Offline")
-            
+
         if not u.last_seen:
             return ("never", "Not active yet")
-            
+
         delta = now - u.last_seen
         if delta <= ONLINE_WINDOW:
             return ("online", "Active now")
@@ -1800,8 +1882,8 @@ def admin_list_users():
             "is_admin": _is_admin(u)
         })
 
-    return jsonify({"status": "success", 
-                    "server_now": now.isoformat() + "+05:30", 
+    return jsonify({"status": "success",
+                    "server_now": now.isoformat() + "+05:30",
                     "users": out}), 200
 
 @app.route('/api/admin/users/<int:user_id>/reset-password', methods=['POST'])
@@ -2042,7 +2124,7 @@ def sync_steps_native():
 
     # ✅ ADD THIS LINE
     print(f"🚨 RAW BODY: {request.get_data(as_text=True)}")
-    
+
     if not auth.startswith('Bearer '):
         return jsonify({"error": "Missing or invalid Authorization header"}), 401
 
@@ -2209,7 +2291,7 @@ def get_performance():
 
     # ✅ NEW: Fetch all distinct dates from DB, sorted descending
     all_dates = sorted(logs_dict.keys(), reverse=True)
-    
+
     history_data = []
     for target_date in all_dates:
         db_row = logs_dict[target_date]
@@ -2217,7 +2299,7 @@ def get_performance():
         t_steps = db_row.treadmill_steps if db_row.treadmill_steps is not None else 0
         total_steps = w_steps + t_steps
         current_target = user.target_steps if target_date == today else (db_row.target_steps or 5000)
-        
+
         history_data.append({
             "date": target_date.strftime('%d %b'),
             "steps": total_steps,
@@ -2323,20 +2405,20 @@ def register_push_token():
 
     try:
         user_id = session['user_id']
-        
+
         # Delete this user's old tokens AND any row that already holds this
         # token (e.g. another user previously logged in on this phone)
         PushToken.query.filter(
             (PushToken.user_id == user_id) | (PushToken.token == token)
         ).delete(synchronize_session=False)
-        
+
         # Add the brand new token
         db.session.add(PushToken(
             user_id=user_id,
             token=token,
             platform=platform,
         ))
-        
+
         db.session.commit()
         return jsonify({"status": "success", "message": "Token registered"}), 200
     except Exception as e:
@@ -2537,7 +2619,7 @@ def signup():
             "message": "An error occurred during registration. Please try again.",
             "code": "DATABASE_ERROR"
         }), 500
-    
+
 # ======================
 # 📧 REGISTRATION EMAIL HELPERS
 # ======================
@@ -2549,7 +2631,7 @@ def build_welcome_email_html(user_name: str, user_email: str) -> str:
     return f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
                 max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a2e;">
-        
+
         <!-- Header -->
         <div style="background: linear-gradient(135deg, #4ecca3 0%, #2d9970 100%);
                     padding: 32px 24px; border-radius: 20px 20px 0 0; text-align: center;">
@@ -2566,7 +2648,7 @@ def build_welcome_email_html(user_name: str, user_email: str) -> str:
         <!-- Body -->
         <div style="background-color: #ffffff; padding: 32px 24px;
                     border: 1px solid #e2e8f0; border-top: none;">
-            
+
             <h2 style="color: #0f172a; font-size: 20px; font-weight: 800;
                        margin: 0 0 8px 0;">
                 Hi {user_name} 👋
@@ -2585,7 +2667,7 @@ def build_welcome_email_html(user_name: str, user_email: str) -> str:
                            margin: 0 0 14px 0; letter-spacing: 0.3px;">
                     ✨ Here's what you can do:
                 </h3>
-                
+
                 <table style="width: 100%; border-collapse: collapse;" cellpadding="0" cellspacing="0">
                     <tr>
                         <td style="width: 40px; vertical-align: top; padding: 8px 0;">
@@ -2701,7 +2783,7 @@ def build_admin_notification_html(user_name: str, user_email: str,
     return f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
                 max-width: 600px; margin: 0 auto; padding: 24px; color: #1a1a2e;">
-        
+
         <!-- Header -->
         <div style="background-color: #1e293b; padding: 24px;
                     border-radius: 20px 20px 0 0; text-align: center;">
@@ -2718,7 +2800,7 @@ def build_admin_notification_html(user_name: str, user_email: str,
         <!-- Body -->
         <div style="background-color: #ffffff; padding: 28px 20px;
                     border: 1px solid #e2e8f0; border-top: none;">
-            
+
             <p style="color: #475569; font-size: 14px; line-height: 1.6;
                       margin: 0 0 20px 0;">
                 A new user just joined the platform. Here are the details:
@@ -2847,14 +2929,14 @@ def verify_recaptcha(token):
         return False
 
     secret_key = os.getenv("RECAPTCHA_V2_SECRET_KEY") # Get this from the v2 Admin Console
-    
+
     if not secret_key:
         print("Missing reCAPTCHA v2 Secret Key")
         return False
 
     # Standard v2 verification endpoint
     url = "https://www.google.com/recaptcha/api/siteverify"
-    
+
     try:
         response = requests.post(
             url,
@@ -2864,7 +2946,7 @@ def verify_recaptcha(token):
             },
             timeout=10
         )
-        
+
         result = response.json()
         # v2 returns "success": true/false
         return result.get("success", False)
@@ -3189,7 +3271,7 @@ def send_otp(email):
         print(f"   type       : {type(e).__name__}")
         traceback.print_exc()
         return None
-    
+
 # 1. Request OTP
 @app.route('/api/forgot_password', methods=['POST'])
 def api_forgot_password():
@@ -3797,7 +3879,7 @@ def send_weekly_progress_report():
             "skipped": skipped,
             "failed": failed,
         }
-    
+
 # 🧪 Trigger emails instantly via browser or cronjob
 import hmac
 import os
@@ -4084,7 +4166,7 @@ def send_periodic_step_pushes():
 
             target = user.target_steps or 5000
             title, body = build_step_message(current, target)
-            
+
             # ✅ Get user email (Assuming your User model has an 'email' column)
             user_email = getattr(user, 'email', f"User_ID_{user.id}")
 
@@ -4098,7 +4180,7 @@ def send_periodic_step_pushes():
                 "priority": "high",
                 "channelId": "default-v2",
             })
-            
+
             # ✅ Map the token to the email so we know who succeeded
             email_mapping[token_row.token] = user_email
 
@@ -4130,10 +4212,10 @@ def send_periodic_step_pushes():
         # ⏱️ Calculate total time taken
         end_time = time.time()
         time_taken = round(end_time - start_time, 2)
-        
+
         # ✅ Prepare the final response
         response_message = f"Sent {sent_count} reminders at {now_ist.strftime('%Y-%m-%d %H:%M')} in {time_taken} seconds."
-        
+
         if successful_emails:
             # Join emails with commas. (If you have 100s of users, this might make the cron-job.org response very long)
             response_message += f" | Emails: {', '.join(successful_emails)}"
